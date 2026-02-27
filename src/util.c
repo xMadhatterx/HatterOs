@@ -96,22 +96,14 @@ void u_u64_to_hex(UINT64 value, char *out, UINTN out_size) {
     out[idx] = '\0';
 }
 
-static inline void io_out8(UINT16 port, UINT8 value) {
-    __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
-}
-
 void serial_init(void) {
-    io_out8(0x3F8 + 1, 0x00);
-    io_out8(0x3F8 + 3, 0x80);
-    io_out8(0x3F8 + 0, 0x03);
-    io_out8(0x3F8 + 1, 0x00);
-    io_out8(0x3F8 + 3, 0x03);
-    io_out8(0x3F8 + 2, 0xC7);
-    io_out8(0x3F8 + 4, 0x0B);
+    // Intentionally left as a no-op.
+    // Direct x86 port I/O (COM1 outb) can trigger a GP fault in some UEFI
+    // execution environments depending on firmware/privilege configuration.
 }
 
 static void serial_write_char(char c) {
-    io_out8(0x3F8, (UINT8)c);
+    (void)c;
 }
 
 void serial_write(const char *text) {
