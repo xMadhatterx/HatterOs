@@ -4,7 +4,6 @@
 #include "gfx.h"
 #include "font.h"
 #include "shell.h"
-#include "util.h"
 
 static void uefi_text(EFI_SYSTEM_TABLE *st, CHAR16 *msg) {
     if (st && st->ConOut) {
@@ -97,11 +96,6 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table) {
         return EFI_SUCCESS;
     }
 
-    uefi_text(system_table, L"HatterOS: entry\r\n");
-
-    serial_init();
-    serial_writeln("[hatteros] Booting UEFI app");
-
     if (system_table->ConIn != NULL && system_table->ConIn->Reset != NULL) {
         uefi_call_wrapper(system_table->ConIn->Reset, 2, system_table->ConIn, FALSE);
     }
@@ -110,11 +104,8 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table) {
     EFI_STATUS status = gfx_init(system_table, &gfx, 1024, 768);
     if (EFI_ERROR(status)) {
         uefi_text(system_table, L"HatterOS: GOP init failed, cannot start framebuffer shell.\r\n");
-        serial_writeln("[hatteros] GOP init failed");
         return EFI_SUCCESS;
     }
-
-    serial_writeln("[hatteros] GOP initialized");
 
     draw_splash(&gfx);
     wait_for_key_or_timeout(system_table, 2000);

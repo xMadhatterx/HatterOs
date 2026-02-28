@@ -12,8 +12,8 @@ Subsystems:
 
 ## Boot + Graphics Path
 
-1. `efi_main` initializes UEFI library support and serial output.
-2. GOP protocol is located via `LocateProtocol`.
+1. `efi_main` validates `SystemTable`, resets keyboard input, and starts graphics setup.
+2. GOP protocol is located via `LocateHandleBuffer(ByProtocol)` + `HandleProtocol`.
 3. Graphics mode is selected by nearest resolution distance to `1024x768`.
 4. Framebuffer metadata is stored in `GfxContext`:
    - base address
@@ -61,9 +61,13 @@ Commands are parsed by prefix/exact comparisons with custom string helpers:
 
 `reboot` delegates to UEFI runtime service `ResetSystem`.
 
+## UEFI Call ABI Safety
+
+Firmware and protocol method calls are routed through GNU-EFI `uefi_call_wrapper(...)` with `EFI_FUNCTION_WRAPPER` enabled in the build. This avoids x86_64 UEFI calling-convention mismatch issues that can otherwise trigger `#GP` faults on some firmware/QEMU combinations.
+
 ## Serial Debugging
 
-Minimal COM1 (`0x3F8`) output is initialized in `util.c` and used for boot/shell logs. In QEMU this appears through `-serial stdio`.
+`serial_*` helpers currently compile as no-ops. Direct COM port I/O from this UEFI app was disabled because it caused GP faults in some environments.
 
 ## Limits (Intentional for Stage 0)
 

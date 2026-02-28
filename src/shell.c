@@ -196,9 +196,6 @@ static void shell_execute(Shell *shell, char *line) {
         return;
     }
 
-    serial_write("[shell] ");
-    serial_writeln(cmd);
-
     if (u_strcmp(cmd, "help") == 0) {
         shell_println(shell, "Commands:");
         shell_println(shell, "  help        - list commands");
