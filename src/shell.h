@@ -4,6 +4,8 @@
 #include <efi.h>
 #include "gfx.h"
 
+#define SHELL_PATH_MAX 260
+
 typedef struct {
     EFI_HANDLE image_handle;
     EFI_SYSTEM_TABLE *st;
@@ -16,6 +18,7 @@ typedef struct {
     UINTN margin_y;
     UINT32 fg_color;
     UINT32 bg_color;
+    char cwd[SHELL_PATH_MAX];
 } Shell;
 
 void shell_init(Shell *shell, EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st, GfxContext *gfx);

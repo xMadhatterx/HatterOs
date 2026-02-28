@@ -18,17 +18,31 @@ Examples:
 - `echo hello`
 - `echo HatterOS stage0`
 
+## `pwd`
+
+Prints current shell directory.
+
+## `cd <path>`
+
+Changes current shell directory.
+
+Examples:
+- `cd /EFI`
+- `cd BOOT`
+- `cd ..`
+
 ## `ls [path]`
 
-Lists files/directories on the EFI System Partition (ESP).
+Lists files/directories on the EFI System Partition (ESP). Supports absolute and relative paths.
 
 Examples:
 - `ls`
 - `ls /EFI/BOOT`
+- `ls ..`
 
 ## `cat <path>`
 
-Prints file contents from the ESP.
+Prints file contents from the ESP. Supports absolute and relative paths.
 
 Examples:
 - `cat /EFI/BOOT/startup.nsh`

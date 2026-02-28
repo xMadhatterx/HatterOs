@@ -54,13 +54,16 @@ Commands are parsed by prefix/exact comparisons with custom string helpers:
 - `help`
 - `clear`
 - `echo <text>`
+- `pwd`
+- `cd <path>`
 - `ls [path]`
 - `cat <path>`
 - `info`
 - `reboot`
 
 `info` reports runtime GOP details and build/version metadata.
-`ls`/`cat` use `LoadedImage -> DeviceHandle -> SimpleFileSystem` to access files on the same ESP the EFI app was loaded from.
+`cd`/`pwd` maintain a shell-level current working directory.
+`ls`/`cat` use `LoadedImage -> DeviceHandle -> SimpleFileSystem` to access files on the same ESP the EFI app was loaded from, with absolute or relative paths resolved against the current directory.
 
 `reboot` delegates to UEFI runtime service `ResetSystem`.
 

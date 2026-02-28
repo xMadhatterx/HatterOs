@@ -4,7 +4,6 @@
 #include <efilib.h>
 
 #define INPUT_MAX 256
-#define PATH16_MAX 260
 #define FILE_IO_CHUNK 512
 
 static void shell_newline(Shell *shell);
@@ -14,10 +13,13 @@ static void shell_execute(Shell *shell, char *line);
 static EFI_STATUS shell_read_line(Shell *shell, char *line, UINTN max_len);
 static void shell_scroll(Shell *shell);
 static EFI_STATUS shell_open_root(Shell *shell, EFI_FILE_PROTOCOL **root);
-static BOOLEAN shell_ascii_path_to_char16(const char *path, CHAR16 *out, UINTN out_len);
+static BOOLEAN shell_normalize_path(const char *cwd, const char *input, char *out, UINTN out_len);
+static BOOLEAN shell_path_to_char16(const char *path, CHAR16 *out, UINTN out_len);
 static void shell_print_file_name(Shell *shell, const CHAR16 *name);
 static void shell_cmd_ls(Shell *shell, const char *arg);
 static void shell_cmd_cat(Shell *shell, const char *arg);
+static void shell_cmd_cd(Shell *shell, const char *arg);
+static void shell_cmd_pwd(Shell *shell);
 static void *shell_alloc(Shell *shell, UINTN size);
 static void shell_free(Shell *shell, void *ptr);
 
@@ -43,6 +45,8 @@ void shell_init(Shell *shell, EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st, Gfx
     }
     shell->cursor_col = 0;
     shell->cursor_row = 0;
+    shell->cwd[0] = '\\';
+    shell->cwd[1] = '\0';
 
     shell_clear(shell);
 }
@@ -246,41 +250,131 @@ static EFI_STATUS shell_open_root(Shell *shell, EFI_FILE_PROTOCOL **root) {
     return uefi_call_wrapper(fs->OpenVolume, 2, fs, root);
 }
 
-// Convert shell ASCII path into UEFI CHAR16 path.
-// Examples: "docs/a.txt" -> "\\docs\\a.txt", "" -> "\\".
-static BOOLEAN shell_ascii_path_to_char16(const char *path, CHAR16 *out, UINTN out_len) {
-    if (out == NULL || out_len < 2) {
+// Normalize relative/absolute shell paths into canonical absolute form.
+// Examples (cwd="\\docs"): "a.txt" -> "\\docs\\a.txt", "../x" -> "\\x".
+static BOOLEAN shell_normalize_path(const char *cwd, const char *input, char *out, UINTN out_len) {
+    if (cwd == NULL || input == NULL || out == NULL || out_len < 2) {
         return FALSE;
     }
 
-    const char *p = path;
-    if (p == NULL) {
-        p = "";
-    }
-    p = u_trim_left((char *)p);
+    char full[SHELL_PATH_MAX];
+    UINTN f = 0;
+    const char *p = u_trim_left((char *)input);
+    BOOLEAN absolute = (*p == '\\' || *p == '/');
 
-    if (*p == '\0' || (*p == '.' && p[1] == '\0')) {
-        out[0] = '\\';
-        out[1] = '\0';
-        return TRUE;
-    }
-
-    UINTN i = 0;
-    if (*p != '\\' && *p != '/') {
-        out[i++] = '\\';
+    if (!absolute) {
+        UINTN i = 0;
+        while (cwd[i] != '\0' && f + 1 < sizeof(full)) {
+            full[f++] = cwd[i++];
+        }
+        if (f == 0) {
+            full[f++] = '\\';
+        }
+        if (f > 1 && full[f - 1] != '\\') {
+            if (f + 1 >= sizeof(full)) {
+                return FALSE;
+            }
+            full[f++] = '\\';
+        }
+    } else {
+        full[f++] = '\\';
+        p++;
     }
 
     while (*p != '\0') {
-        if (i + 1 >= out_len) {
+        if (f + 1 >= sizeof(full)) {
             return FALSE;
         }
         char c = *p++;
-        if (c == '/') {
-            c = '\\';
-        }
-        out[i++] = (CHAR16)(UINT8)c;
+        full[f++] = (c == '/') ? '\\' : c;
+    }
+    full[f] = '\0';
+
+    if (full[0] == '\0') {
+        full[0] = '\\';
+        full[1] = '\0';
     }
 
+    UINTN seg_start[64];
+    UINTN depth = 0;
+    UINTN o = 1;
+    out[0] = '\\';
+    out[1] = '\0';
+
+    UINTN i = 0;
+    while (full[i] != '\0') {
+        while (full[i] == '\\') {
+            i++;
+        }
+        if (full[i] == '\0') {
+            break;
+        }
+
+        char token[SHELL_PATH_MAX];
+        UINTN t = 0;
+        while (full[i] != '\0' && full[i] != '\\' && t + 1 < sizeof(token)) {
+            token[t++] = full[i++];
+        }
+        token[t] = '\0';
+
+        if (u_strcmp(token, ".") == 0 || token[0] == '\0') {
+            continue;
+        }
+
+        if (u_strcmp(token, "..") == 0) {
+            if (depth > 0) {
+                o = seg_start[depth - 1];
+                if (o > 1) {
+                    o--;
+                }
+                depth--;
+                out[o] = '\0';
+            }
+            continue;
+        }
+
+        if (depth >= 64) {
+            return FALSE;
+        }
+
+        if (o > 1) {
+            if (o + 1 >= out_len) {
+                return FALSE;
+            }
+            out[o++] = '\\';
+        }
+        seg_start[depth++] = o;
+
+        for (UINTN k = 0; token[k] != '\0'; k++) {
+            if (o + 1 >= out_len) {
+                return FALSE;
+            }
+            out[o++] = token[k];
+        }
+        out[o] = '\0';
+    }
+
+    if (o == 0) {
+        out[0] = '\\';
+        out[1] = '\0';
+    }
+    return TRUE;
+}
+
+// Convert normalized ASCII path into UEFI CHAR16 path.
+static BOOLEAN shell_path_to_char16(const char *path, CHAR16 *out, UINTN out_len) {
+    if (path == NULL || out == NULL || out_len < 2) {
+        return FALSE;
+    }
+
+    UINTN i = 0;
+    while (path[i] != '\0') {
+        if (i + 1 >= out_len) {
+            return FALSE;
+        }
+        out[i] = (CHAR16)(UINT8)path[i];
+        i++;
+    }
     out[i] = '\0';
     return TRUE;
 }
@@ -303,9 +397,17 @@ static void shell_print_file_name(Shell *shell, const CHAR16 *name) {
 static void shell_cmd_ls(Shell *shell, const char *arg) {
     EFI_FILE_PROTOCOL *root = NULL;
     EFI_FILE_PROTOCOL *dir = NULL;
-    CHAR16 path16[PATH16_MAX];
+    CHAR16 path16[SHELL_PATH_MAX];
+    char resolved[SHELL_PATH_MAX];
+    const char *raw = (arg != NULL) ? arg : "";
+    raw = u_trim_left((char *)raw);
 
-    if (!shell_ascii_path_to_char16(arg, path16, PATH16_MAX)) {
+    if (*raw == '\0') {
+        raw = ".";
+    }
+
+    if (!shell_normalize_path(shell->cwd, raw, resolved, sizeof(resolved)) ||
+        !shell_path_to_char16(resolved, path16, SHELL_PATH_MAX)) {
         shell_println(shell, "ls: path too long");
         return;
     }
@@ -386,16 +488,20 @@ static void shell_cmd_ls(Shell *shell, const char *arg) {
 
 // `cat <path>` implementation (text-oriented viewer).
 static void shell_cmd_cat(Shell *shell, const char *arg) {
-    if (arg == NULL || *arg == '\0') {
+    const char *raw = (arg != NULL) ? arg : "";
+    raw = u_trim_left((char *)raw);
+    if (*raw == '\0') {
         shell_println(shell, "cat: usage: cat <path>");
         return;
     }
 
     EFI_FILE_PROTOCOL *root = NULL;
     EFI_FILE_PROTOCOL *file = NULL;
-    CHAR16 path16[PATH16_MAX];
+    CHAR16 path16[SHELL_PATH_MAX];
+    char resolved[SHELL_PATH_MAX];
 
-    if (!shell_ascii_path_to_char16(arg, path16, PATH16_MAX)) {
+    if (!shell_normalize_path(shell->cwd, raw, resolved, sizeof(resolved)) ||
+        !shell_path_to_char16(resolved, path16, SHELL_PATH_MAX)) {
         shell_println(shell, "cat: path too long");
         return;
     }
@@ -463,6 +569,97 @@ static void shell_cmd_cat(Shell *shell, const char *arg) {
     uefi_call_wrapper(file->Close, 1, file);
 }
 
+// `cd <path>` implementation.
+static void shell_cmd_cd(Shell *shell, const char *arg) {
+    const char *raw = (arg != NULL) ? arg : "";
+    raw = u_trim_left((char *)raw);
+    if (*raw == '\0') {
+        shell_println(shell, "cd: usage: cd <path>");
+        return;
+    }
+
+    char resolved[SHELL_PATH_MAX];
+    CHAR16 path16[SHELL_PATH_MAX];
+    if (!shell_normalize_path(shell->cwd, raw, resolved, sizeof(resolved)) ||
+        !shell_path_to_char16(resolved, path16, SHELL_PATH_MAX)) {
+        shell_println(shell, "cd: path too long");
+        return;
+    }
+
+    EFI_FILE_PROTOCOL *root = NULL;
+    EFI_FILE_PROTOCOL *node = NULL;
+    EFI_STATUS status = shell_open_root(shell, &root);
+    if (EFI_ERROR(status) || root == NULL) {
+        shell_println(shell, "cd: failed to open filesystem");
+        return;
+    }
+
+    status = uefi_call_wrapper(root->Open, 5, root, &node, path16, EFI_FILE_MODE_READ, 0);
+    uefi_call_wrapper(root->Close, 1, root);
+    if (EFI_ERROR(status) || node == NULL) {
+        shell_println(shell, "cd: cannot open path");
+        return;
+    }
+
+    EFI_GUID file_info_guid = EFI_FILE_INFO_ID;
+    UINTN info_size = 0;
+    status = uefi_call_wrapper(node->GetInfo, 4, node, &file_info_guid, &info_size, NULL);
+    if (status != EFI_BUFFER_TOO_SMALL || info_size == 0) {
+        shell_println(shell, "cd: cannot query path");
+        uefi_call_wrapper(node->Close, 1, node);
+        return;
+    }
+
+    EFI_FILE_INFO *info = (EFI_FILE_INFO *)shell_alloc(shell, info_size);
+    if (info == NULL) {
+        shell_println(shell, "cd: out of memory");
+        uefi_call_wrapper(node->Close, 1, node);
+        return;
+    }
+
+    status = uefi_call_wrapper(node->GetInfo, 4, node, &file_info_guid, &info_size, info);
+    if (EFI_ERROR(status)) {
+        shell_println(shell, "cd: cannot query path");
+        shell_free(shell, info);
+        uefi_call_wrapper(node->Close, 1, node);
+        return;
+    }
+
+    if ((info->Attribute & EFI_FILE_DIRECTORY) == 0) {
+        shell_println(shell, "cd: target is not a directory");
+        shell_free(shell, info);
+        uefi_call_wrapper(node->Close, 1, node);
+        return;
+    }
+
+    UINTN i = 0;
+    while (resolved[i] != '\0' && i + 1 < sizeof(shell->cwd)) {
+        shell->cwd[i] = resolved[i];
+        i++;
+    }
+    shell->cwd[i] = '\0';
+
+    shell_free(shell, info);
+    uefi_call_wrapper(node->Close, 1, node);
+}
+
+// `pwd` implementation.
+static void shell_cmd_pwd(Shell *shell) {
+    if (shell->cwd[0] == '\\' && shell->cwd[1] == '\0') {
+        shell_println(shell, "/");
+        return;
+    }
+
+    char out[SHELL_PATH_MAX];
+    UINTN i = 0;
+    while (shell->cwd[i] != '\0' && i + 1 < sizeof(out)) {
+        out[i] = (shell->cwd[i] == '\\') ? '/' : shell->cwd[i];
+        i++;
+    }
+    out[i] = '\0';
+    shell_println(shell, out);
+}
+
 // Print runtime/system metadata for debugging.
 static void print_info(Shell *shell) {
     char w[32], h[32], fb_addr[32], fb_size[32];
@@ -499,6 +696,8 @@ static void shell_execute(Shell *shell, char *line) {
         shell_println(shell, "  help        - list commands");
         shell_println(shell, "  clear       - clear the screen");
         shell_println(shell, "  echo <text> - print text");
+        shell_println(shell, "  pwd         - print current directory");
+        shell_println(shell, "  cd <path>   - change current directory");
         shell_println(shell, "  ls [path]   - list files on ESP");
         shell_println(shell, "  cat <path>  - print file contents");
         shell_println(shell, "  info        - show system info");
@@ -529,6 +728,21 @@ static void shell_execute(Shell *shell, char *line) {
 
     if (u_startswith(cmd, "echo ")) {
         shell_println(shell, cmd + 5);
+        return;
+    }
+
+    if (u_strcmp(cmd, "pwd") == 0) {
+        shell_cmd_pwd(shell);
+        return;
+    }
+
+    if (u_startswith(cmd, "cd ")) {
+        shell_cmd_cd(shell, u_trim_left(cmd + 3));
+        return;
+    }
+
+    if (u_strcmp(cmd, "cd") == 0) {
+        shell_cmd_cd(shell, "");
         return;
     }
 

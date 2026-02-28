@@ -85,6 +85,8 @@ cat /docs/hello.txt
 
 After booting into the shell, quick smoke-test commands:
 - `help`
+- `pwd`
+- `cd /EFI/BOOT`
 - `ls`
 - `cat /EFI/BOOT/STARTUP.NSH` (if present)
 - `info`
