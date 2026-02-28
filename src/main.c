@@ -5,8 +5,6 @@
 #include "font.h"
 #include "shell.h"
 
-#define SPLASH_BMP_PATH L"\\EFI\\BOOT\\SPLASH.BMP"
-
 static UINT16 read_le16(const UINT8 *p) {
     return (UINT16)(p[0] | ((UINT16)p[1] << 8));
 }
@@ -242,16 +240,31 @@ static BOOLEAN draw_external_splash(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *s
         return FALSE;
     }
 
-    UINT8 *bmp_data = NULL;
-    UINTN bmp_size = 0;
-    EFI_STATUS status = read_file_from_esp(image_handle, st, SPLASH_BMP_PATH, &bmp_data, &bmp_size);
-    if (EFI_ERROR(status) || bmp_data == NULL) {
-        return FALSE;
+    // Accept common locations/case variants so users can drop assets in esp_files/
+    // without having to match one exact path.
+    static const CHAR16 *const candidates[] = {
+        L"\\EFI\\BOOT\\SPLASH.BMP",
+        L"\\EFI\\BOOT\\splash.bmp",
+        L"\\SPLASH.BMP",
+        L"\\splash.bmp",
+    };
+
+    for (UINTN i = 0; i < (sizeof(candidates) / sizeof(candidates[0])); i++) {
+        UINT8 *bmp_data = NULL;
+        UINTN bmp_size = 0;
+        EFI_STATUS status = read_file_from_esp(image_handle, st, candidates[i], &bmp_data, &bmp_size);
+        if (EFI_ERROR(status) || bmp_data == NULL) {
+            continue;
+        }
+
+        BOOLEAN ok = draw_bmp_centered(gfx, bmp_data, bmp_size);
+        uefi_call_wrapper(st->BootServices->FreePool, 1, bmp_data);
+        if (ok) {
+            return TRUE;
+        }
     }
 
-    BOOLEAN ok = draw_bmp_centered(gfx, bmp_data, bmp_size);
-    uefi_call_wrapper(st->BootServices->FreePool, 1, bmp_data);
-    return ok;
+    return FALSE;
 }
 
 // Draw a procedural top-hat icon so we do not need external image assets.

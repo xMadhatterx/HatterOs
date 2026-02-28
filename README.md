@@ -86,7 +86,7 @@ cat /docs/hello.txt
 Note: `esp_files/EFI/BOOT/STARTUP.NSH` is included as a smoke-test script template and copied into the image automatically.
 
 Optional splash asset:
-- Place a bitmap at `esp_files/EFI/BOOT/SPLASH.BMP`.
+- Place a bitmap at `esp_files/EFI/BOOT/SPLASH.BMP` (or `esp_files/splash.bmp`).
 - Supported format: uncompressed BMP, 24-bit or 32-bit.
 - If missing/invalid, HatterOS uses the built-in procedural splash.
 
