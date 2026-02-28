@@ -23,6 +23,12 @@ void shell_init(Shell *shell, EFI_SYSTEM_TABLE *st, GfxContext *gfx) {
     UINTN usable_h = (gfx->height > shell->margin_y * 2) ? (gfx->height - shell->margin_y * 2) : gfx->height;
     shell->cols = usable_w / FONT_CHAR_WIDTH;
     shell->rows = usable_h / FONT_CHAR_HEIGHT;
+    if (shell->cols == 0) {
+        shell->cols = 1;
+    }
+    if (shell->rows == 0) {
+        shell->rows = 1;
+    }
     shell->cursor_col = 0;
     shell->cursor_row = 0;
 
@@ -38,17 +44,24 @@ void shell_clear(Shell *shell) {
 static void shell_scroll(Shell *shell) {
     GfxContext *gfx = shell->gfx;
     UINTN line_px = FONT_CHAR_HEIGHT;
+    if (gfx->height <= shell->margin_y * 2 + line_px || gfx->width <= shell->margin_x * 2) {
+        shell_clear(shell);
+        return;
+    }
 
-    for (UINTN y = shell->margin_y; y + line_px < gfx->height - shell->margin_y; y++) {
+    UINTN right = gfx->width - shell->margin_x;
+    UINTN bottom = gfx->height - shell->margin_y;
+
+    for (UINTN y = shell->margin_y; y + line_px < bottom; y++) {
         UINTN dst_row = y * gfx->pixels_per_scanline;
         UINTN src_row = (y + line_px) * gfx->pixels_per_scanline;
-        for (UINTN x = shell->margin_x; x < gfx->width - shell->margin_x; x++) {
+        for (UINTN x = shell->margin_x; x < right; x++) {
             gfx->framebuffer[dst_row + x] = gfx->framebuffer[src_row + x];
         }
     }
 
-    UINTN clear_start = gfx->height - shell->margin_y - line_px;
-    gfx_fill_rect(gfx, shell->margin_x, clear_start, gfx->width - shell->margin_x * 2, line_px, shell->bg_color);
+    UINTN clear_start = bottom - line_px;
+    gfx_fill_rect(gfx, shell->margin_x, clear_start, right - shell->margin_x, line_px, shell->bg_color);
 }
 
 static void shell_newline(Shell *shell) {
