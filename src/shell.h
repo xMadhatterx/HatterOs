@@ -2,7 +2,6 @@
 #define HATTEROS_SHELL_H
 
 #include <efi.h>
-#include <efilib.h>
 #include "gfx.h"
 
 typedef struct {

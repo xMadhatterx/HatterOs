@@ -1,5 +1,4 @@
 #include <efi.h>
-#include <efilib.h>
 
 #include "gfx.h"
 #include "font.h"
@@ -73,7 +72,7 @@ static void wait_for_key_or_timeout(EFI_SYSTEM_TABLE *st, UINTN timeout_ms) {
 }
 
 EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table) {
-    InitializeLib(image_handle, system_table);
+    (void)image_handle;
 
     serial_init();
     serial_writeln("[hatteros] Booting UEFI app");

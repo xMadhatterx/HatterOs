@@ -2,7 +2,6 @@
 #define HATTEROS_GFX_H
 
 #include <efi.h>
-#include <efilib.h>
 
 typedef struct {
     EFI_GRAPHICS_OUTPUT_PROTOCOL *gop;
