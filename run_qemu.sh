@@ -55,7 +55,10 @@ copy_extra_esp_files() {
 
   while IFS= read -r -d '' dir; do
     local rel="${dir#"$ESP_FILES_DIR"/}"
-    mmd -i "$ESP_IMG" "::/$rel" >/dev/null 2>&1 || true
+    if [[ "$rel" == "EFI" || "$rel" == "EFI/BOOT" ]]; then
+      continue
+    fi
+    mmd -i "$ESP_IMG" "::/$rel" </dev/null >/dev/null 2>&1 || true
     dir_count=$((dir_count + 1))
   done < <(find "$ESP_FILES_DIR" -mindepth 1 -type d -print0)
 
