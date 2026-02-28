@@ -62,6 +62,27 @@ Script behavior:
 4. Locates OVMF firmware from common paths.
 5. Boots QEMU with `-serial stdio` enabled.
 
+### Minimal Diagnostic Boot
+
+If the full app crashes with `#GP`, boot a minimal EFI app to isolate toolchain/firmware issues:
+
+```bash
+./run_qemu.sh --minimal
+```
+
+Expected result: a text screen saying `HatterOS minimal EFI test loaded.`
+
+- If minimal also crashes: issue is likely in firmware pairing/toolchain output format.
+- If minimal works: issue is in HatterOS app logic and we can debug it with symbol offsets.
+
+### Override OVMF Paths (optional)
+
+If your distro uses non-standard OVMF locations:
+
+```bash
+OVMF_CODE_PATH=/path/to/OVMF_CODE.fd OVMF_VARS_PATH=/path/to/OVMF_VARS.fd ./run_qemu.sh
+```
+
 ## Screenshots (optional)
 
 Inside another terminal while QEMU is running, you can use QEMU monitor commands to dump display buffers, or use host screenshot tooling.

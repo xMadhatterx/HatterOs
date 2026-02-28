@@ -6,6 +6,7 @@ BUILD_DIR="$ROOT_DIR/build"
 EFI_BIN="$BUILD_DIR/BOOTX64.EFI"
 ESP_IMG="$BUILD_DIR/hatteros_esp.img"
 OVMF_VARS_WORK="$BUILD_DIR/OVMF_VARS.fd"
+MAKE_TARGET="all"
 
 find_ovmf_pair() {
   local pairs=(
@@ -36,6 +37,11 @@ require_cmd() {
 }
 
 main() {
+  if [[ "${1:-}" == "--minimal" ]]; then
+    EFI_BIN="$BUILD_DIR/BOOTX64_MIN.EFI"
+    MAKE_TARGET="minimal"
+  fi
+
   mkdir -p "$BUILD_DIR"
 
   require_cmd make
@@ -52,17 +58,29 @@ main() {
     exit 1
   fi
 
-  local ovmf_pair
-  if ! ovmf_pair="$(find_ovmf_pair)"; then
-    echo "Could not find OVMF firmware files." >&2
-    echo "Checked common paths under /usr/share/OVMF and /usr/share/edk2*." >&2
-    exit 1
+  local ovmf_code ovmf_vars_src ovmf_pair
+  if [[ -n "${OVMF_CODE_PATH:-}" || -n "${OVMF_VARS_PATH:-}" ]]; then
+    if [[ -z "${OVMF_CODE_PATH:-}" || -z "${OVMF_VARS_PATH:-}" ]]; then
+      echo "Set both OVMF_CODE_PATH and OVMF_VARS_PATH together." >&2
+      exit 1
+    fi
+    ovmf_code="$OVMF_CODE_PATH"
+    ovmf_vars_src="$OVMF_VARS_PATH"
+    if [[ ! -f "$ovmf_code" || ! -f "$ovmf_vars_src" ]]; then
+      echo "OVMF_CODE_PATH/OVMF_VARS_PATH file not found." >&2
+      exit 1
+    fi
+  else
+    if ! ovmf_pair="$(find_ovmf_pair)"; then
+      echo "Could not find OVMF firmware files." >&2
+      echo "Checked common paths under /usr/share/OVMF and /usr/share/edk2*." >&2
+      exit 1
+    fi
+    ovmf_code="${ovmf_pair%%|*}"
+    ovmf_vars_src="${ovmf_pair##*|}"
   fi
 
-  local ovmf_code="${ovmf_pair%%|*}"
-  local ovmf_vars_src="${ovmf_pair##*|}"
-
-  make -C "$ROOT_DIR"
+  make -C "$ROOT_DIR" "$MAKE_TARGET"
 
   if [[ ! -f "$EFI_BIN" ]]; then
     echo "Expected EFI binary at $EFI_BIN but it was not produced." >&2
@@ -82,6 +100,8 @@ main() {
 
   cp "$ovmf_vars_src" "$OVMF_VARS_WORK"
 
+  echo "Using OVMF CODE: $ovmf_code"
+  echo "Using OVMF VARS: $ovmf_vars_src"
   echo "Launching QEMU with serial on stdio..."
   qemu-system-x86_64 \
     -machine q35,accel=tcg \
