@@ -124,7 +124,34 @@ void shell_println(Shell *shell, const char *text) {
 
 // Draw the interactive prompt.
 static void shell_prompt(Shell *shell) {
-    shell_print(shell, "HatterOS> ");
+    char prompt[SHELL_PATH_MAX + 16];
+    UINTN i = 0;
+    const char *base = "HATTEROS";
+
+    while (base[i] != '\0' && i + 1 < sizeof(prompt)) {
+        prompt[i] = base[i];
+        i++;
+    }
+
+    if (shell->cwd[0] == '\\' && shell->cwd[1] == '\0') {
+        if (i + 1 < sizeof(prompt)) {
+            prompt[i++] = '/';
+        }
+    } else {
+        UINTN j = 0;
+        while (shell->cwd[j] != '\0' && i + 1 < sizeof(prompt)) {
+            prompt[i++] = (shell->cwd[j] == '\\') ? '/' : shell->cwd[j];
+            j++;
+        }
+    }
+
+    if (i + 2 < sizeof(prompt)) {
+        prompt[i++] = '>';
+        prompt[i++] = ' ';
+    }
+    prompt[i] = '\0';
+
+    shell_print(shell, prompt);
 }
 
 // Remove one character cell visually (used for backspace handling).

@@ -1,6 +1,6 @@
 # HatterOS Shell Commands
 
-Prompt: `HatterOS> `
+Prompt: `HATTEROS/...> ` (for example `HATTEROS/> ` or `HATTEROS/EFI/BOOT> `)
 
 ## `help`
 
