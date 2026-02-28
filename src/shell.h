@@ -5,6 +5,8 @@
 #include "gfx.h"
 
 #define SHELL_PATH_MAX 260
+#define SHELL_INPUT_MAX 256
+#define SHELL_HISTORY_MAX 16
 
 typedef struct {
     EFI_HANDLE image_handle;
@@ -19,6 +21,8 @@ typedef struct {
     UINT32 fg_color;
     UINT32 bg_color;
     char cwd[SHELL_PATH_MAX];
+    char history[SHELL_HISTORY_MAX][SHELL_INPUT_MAX];
+    UINTN history_count;
 } Shell;
 
 void shell_init(Shell *shell, EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st, GfxContext *gfx);

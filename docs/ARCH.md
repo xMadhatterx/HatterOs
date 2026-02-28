@@ -58,14 +58,26 @@ Commands are parsed by prefix/exact comparisons with custom string helpers:
 - `cd <path>`
 - `ls [path]`
 - `cat <path>`
+- `mkdir <path>`
+- `touch <path>`
+- `cp <src> <dst>`
 - `info`
 - `reboot`
 
 `info` reports runtime GOP details and build/version metadata.
 `cd`/`pwd` maintain a shell-level current working directory.
 `ls`/`cat` use `LoadedImage -> DeviceHandle -> SimpleFileSystem` to access files on the same ESP the EFI app was loaded from, with absolute or relative paths resolved against the current directory.
+`mkdir`/`touch`/`cp` use the same path resolver and UEFI `EFI_FILE_PROTOCOL` operations for create/read/write.
 
 `reboot` delegates to UEFI runtime service `ResetSystem`.
+
+## Line Editing
+
+The shell input loop is a small single-line editor:
+- insertion at cursor position
+- left/right cursor movement
+- backspace in the middle of the line
+- up/down command history recall
 
 ## UEFI Call ABI Safety
 

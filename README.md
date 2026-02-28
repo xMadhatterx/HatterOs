@@ -83,12 +83,16 @@ ls /docs
 cat /docs/hello.txt
 ```
 
+Note: `esp_files/EFI/BOOT/STARTUP.NSH` is included as a smoke-test script template and copied into the image automatically.
+
 After booting into the shell, quick smoke-test commands:
 - `help`
 - `pwd`
 - `cd /EFI/BOOT`
 - `ls`
 - `cat /EFI/BOOT/STARTUP.NSH` (if present)
+- `mkdir demo && touch demo/a.txt` (run as separate commands)
+- `cp demo/a.txt demo/b.txt`
 - `info`
 
 ### Minimal Diagnostic Boot
