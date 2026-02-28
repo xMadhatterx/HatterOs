@@ -313,7 +313,7 @@ static void shell_cmd_ls(Shell *shell, const char *arg) {
         if (meta != NULL) {
             status = uefi_call_wrapper(dir->GetInfo, 4, dir, &file_info_guid, &meta_size, meta);
             if (!EFI_ERROR(status) && (meta->Attribute & EFI_FILE_DIRECTORY) == 0) {
-                shell_print("      ");
+                shell_print(shell, "      ");
                 shell_print_file_name(shell, meta->FileName);
                 shell_free(shell, meta);
                 uefi_call_wrapper(dir->Close, 1, dir);
