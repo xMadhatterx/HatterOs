@@ -50,15 +50,24 @@ copy_extra_esp_files() {
 
   echo "Copying extra files from esp_files/ into ESP image..."
 
+  local dir_count=0
+  local file_count=0
+
   while IFS= read -r -d '' dir; do
     local rel="${dir#"$ESP_FILES_DIR"/}"
     mmd -i "$ESP_IMG" "::/$rel" >/dev/null 2>&1 || true
+    dir_count=$((dir_count + 1))
   done < <(find "$ESP_FILES_DIR" -mindepth 1 -type d -print0)
 
   while IFS= read -r -d '' file; do
     local rel="${file#"$ESP_FILES_DIR"/}"
-    mcopy -i "$ESP_IMG" "$file" "::/$rel" >/dev/null
+    echo "  -> $rel"
+    # -D o makes clashes non-interactive (overwrite) so script never blocks on prompts.
+    mcopy -i "$ESP_IMG" -D o "$file" "::/$rel" >/dev/null
+    file_count=$((file_count + 1))
   done < <(find "$ESP_FILES_DIR" -type f ! -name .gitkeep -print0)
+
+  echo "Copied $file_count files across $dir_count directories from esp_files/."
 }
 
 main() {
@@ -112,6 +121,7 @@ main() {
     exit 1
   fi
 
+  rm -f "$ESP_IMG"
   qemu-img create -f raw "$ESP_IMG" 64M >/dev/null
 
   if command -v mkfs.fat >/dev/null 2>&1; then
