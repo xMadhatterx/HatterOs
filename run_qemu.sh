@@ -100,10 +100,12 @@ prepare_auto_splash() {
   fi
 
   local out="$BUILD_DIR/auto_splash.bmp"
+  # Keep generated BMP reasonably small so FAT image copy stays quick.
+  # ">" means only shrink if source is larger than target bounds.
   if command -v magick >/dev/null 2>&1; then
-    magick "$src" -type TrueColor -alpha off BMP3:"$out"
+    magick "$src" -resize "1024x768>" -type TrueColor -alpha off BMP3:"$out"
   elif command -v convert >/dev/null 2>&1; then
-    convert "$src" -type TrueColor -alpha off BMP3:"$out"
+    convert "$src" -resize "1024x768>" -type TrueColor -alpha off BMP3:"$out"
   else
     echo "Found splash source ($src) but no ImageMagick tool (magick/convert). Skipping auto-convert." >&2
     return

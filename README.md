@@ -94,6 +94,7 @@ Optional splash asset:
 - Supported format: uncompressed BMP, 24-bit or 32-bit.
 - If missing/invalid, HatterOS uses the built-in procedural splash.
 - Optional convenience: place `splash.png`/`splash.jpg`; `run_qemu.sh` will auto-convert to BMP when ImageMagick is available.
+  Auto-convert also shrinks large images to fit within `1024x768` to keep copy/boot times reasonable.
 
 Default stage-0 filesystem tree (pre-seeded):
 - `/HATTEROS/system/config`

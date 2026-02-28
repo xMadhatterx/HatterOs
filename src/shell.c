@@ -3,7 +3,7 @@
 #include "util.h"
 #include <efilib.h>
 
-#define FILE_IO_CHUNK 512
+#define FILE_IO_CHUNK 8192
 #define SHELL_CFG_PATH "\\HATTEROS\\system\\config\\shell.cfg"
 #define HEXDUMP_COLS 16
 #define SHELL_CFG_MAGIC 0x53434647U
