@@ -71,7 +71,7 @@ static void wait_for_key_or_timeout(EFI_SYSTEM_TABLE *st, UINTN timeout_ms) {
     st->BootServices->CloseEvent(timer_event);
 }
 
-EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table) {
+EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table) {
     (void)image_handle;
 
     serial_init();

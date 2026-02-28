@@ -19,8 +19,16 @@ static UINT32 to_native_color(const GfxContext *ctx, UINT32 rgb) {
 EFI_STATUS gfx_init(EFI_SYSTEM_TABLE *st, GfxContext *ctx, UINTN target_w, UINTN target_h) {
     EFI_STATUS status;
     EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
+    EFI_HANDLE *handles = NULL;
+    UINTN handle_count = 0;
 
-    status = st->BootServices->LocateProtocol(&gop_guid, NULL, (void **)&ctx->gop);
+    status = st->BootServices->LocateHandleBuffer(ByProtocol, &gop_guid, NULL, &handle_count, &handles);
+    if (EFI_ERROR(status) || handle_count == 0) {
+        return status;
+    }
+
+    status = st->BootServices->HandleProtocol(handles[0], &gop_guid, (void **)&ctx->gop);
+    st->BootServices->FreePool(handles);
     if (EFI_ERROR(status)) {
         return status;
     }
