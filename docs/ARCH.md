@@ -24,6 +24,7 @@ Subsystems:
    - vertical gradient base
    - optional external BMP (`\EFI\BOOT\SPLASH.BMP`, 24/32-bit uncompressed) centered on screen
    - fallback procedural top-hat icon + centered `HatterOS` title when BMP is missing/invalid
+   - optional diagnostic text when external splash loading fails
    - continue hint
 
 ## Text Rendering
@@ -56,11 +57,17 @@ Commands are parsed by prefix/exact comparisons with custom string helpers:
 - `echo <text>`
 - `pwd`
 - `cd <path>`
-- `ls [path]`
+- `ls [-l] [path]`
 - `cat <path>`
-- `mkdir <path>`
+- `mkdir [-p] <path>`
 - `touch <path>`
 - `cp <src> <dst>`
+- `rm <path>`
+- `mv <src> <dst>`
+- `hexdump <path>`
+- `history`
+- `viewbmp <path>`
+- `initfs`
 - `theme [option]`
 - `time`
 - `memmap`
@@ -70,8 +77,11 @@ Commands are parsed by prefix/exact comparisons with custom string helpers:
 `info` reports runtime GOP details and build/version metadata.
 `cd`/`pwd` maintain a shell-level current working directory.
 `ls`/`cat` use `LoadedImage -> DeviceHandle -> SimpleFileSystem` to access files on the same ESP the EFI app was loaded from, with absolute or relative paths resolved against the current directory.
-`mkdir`/`touch`/`cp` use the same path resolver and UEFI `EFI_FILE_PROTOCOL` operations for create/read/write.
+`mkdir`/`touch`/`cp`/`rm`/`mv` use the same path resolver and UEFI `EFI_FILE_PROTOCOL` operations for create/read/write/delete.
+`mkdir -p` and `initfs` create the default `/HATTEROS` directory tree for future filesystem layering.
+`viewbmp` reuses framebuffer rendering to preview BMP files from the ESP.
 `theme` updates shell foreground/background colors and prompt style (full path vs short prompt).
+Shell theme settings are persisted to `/HATTEROS/system/config/shell.cfg`.
 `time` uses UEFI runtime service `GetTime`.
 `memmap` uses UEFI boot service `GetMemoryMap` and prints a per-memory-type summary.
 
@@ -84,6 +94,7 @@ The shell input loop is a small single-line editor:
 - left/right cursor movement
 - backspace in the middle of the line
 - up/down command history recall
+- visible caret/cursor at the current insert column
 
 ## UEFI Call ABI Safety
 

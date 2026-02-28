@@ -7,10 +7,13 @@ Line editor shortcuts:
 - Left/Right arrows move cursor in the current line.
 - Up/Down arrows browse command history.
 - Backspace deletes left of cursor.
+- A visible caret shows current insert position.
 
-## `help`
+## `help [command]`
 
 Lists available commands and short descriptions.
+
+`help <command>` prints focused usage for a specific command.
 
 ## `clear`
 
@@ -37,12 +40,15 @@ Examples:
 - `cd BOOT`
 - `cd ..`
 
-## `ls [path]`
+## `ls [-l] [path]`
 
 Lists files/directories on the EFI System Partition (ESP). Supports absolute and relative paths.
 
+Use `-l` for long view (type, size, modification time).
+
 Examples:
 - `ls`
+- `ls -l`
 - `ls /EFI/BOOT`
 - `ls ..`
 
@@ -54,12 +60,15 @@ Examples:
 - `cat /EFI/BOOT/startup.nsh`
 - `cat /EFI/BOOT/readme.txt`
 
-## `mkdir <path>`
+## `mkdir [-p] <path>`
 
 Creates a directory on the ESP.
 
+Use `-p` to create missing parent directories.
+
 Examples:
 - `mkdir logs`
+- `mkdir -p /tmp/data`
 - `mkdir /tmp/data`
 
 ## `touch <path>`
@@ -78,6 +87,31 @@ Examples:
 - `cp notes.txt notes.bak`
 - `cp /docs/a.txt /docs/b.txt`
 
+## `rm <path>`
+
+Deletes a file on the ESP.
+
+## `mv <src> <dst>`
+
+Moves/renames a file on the ESP (implemented as copy + delete in stage 0).
+
+## `hexdump <path>`
+
+Prints file bytes as hex + ASCII rows.
+
+## `history`
+
+Prints command history currently kept in the shell buffer.
+
+## `viewbmp <path>`
+
+Displays an uncompressed 24-bit or 32-bit BMP full-screen.
+Press any key to return to the shell.
+
+## `initfs`
+
+Creates the default `/HATTEROS` directory tree (idempotent).
+
 ## `theme [option]`
 
 Updates shell colors or prompt style.
@@ -92,6 +126,8 @@ Options:
 Examples:
 - `theme amber`
 - `theme prompt short`
+
+Theme and prompt mode are persisted to `/HATTEROS/system/config/shell.cfg`.
 
 ## `time`
 

@@ -4,18 +4,39 @@
 #include <efilib.h>
 
 #define FILE_IO_CHUNK 512
+#define SHELL_CFG_PATH "\\HATTEROS\\system\\config\\shell.cfg"
+#define HEXDUMP_COLS 16
+#define SHELL_CFG_MAGIC 0x53434647U
+#define SHELL_CFG_VERSION 1U
+
+typedef struct {
+    UINT32 magic;
+    UINT32 version;
+    UINT32 fg_color;
+    UINT32 bg_color;
+    UINT8 prompt_show_path;
+    UINT8 reserved[3];
+} ShellConfigFile;
 
 static void shell_newline(Shell *shell);
 static void shell_putc(Shell *shell, char c);
 static void shell_set_cursor(Shell *shell, UINTN row, UINTN col);
+static UINT16 shell_read_le16(const UINT8 *p);
+static UINT32 shell_read_le32(const UINT8 *p);
 static void shell_prompt(Shell *shell);
 static UINTN shell_build_prompt(Shell *shell, char *out, UINTN out_len);
 static void shell_execute(Shell *shell, char *line);
 static EFI_STATUS shell_read_line(Shell *shell, char *line, UINTN max_len);
 static void shell_scroll(Shell *shell);
+static void shell_draw_cursor(Shell *shell, UINTN row, UINTN col);
 static EFI_STATUS shell_open_root(Shell *shell, EFI_FILE_PROTOCOL **root);
 static EFI_STATUS shell_open_path(Shell *shell, const char *path, UINT64 mode, UINT64 attrs, EFI_FILE_PROTOCOL **out);
 static EFI_FILE_INFO *shell_get_file_info(Shell *shell, EFI_FILE_PROTOCOL *file, EFI_STATUS *out_status);
+static EFI_STATUS shell_ensure_dir(Shell *shell, const char *path);
+static EFI_STATUS shell_ensure_dir_tree(Shell *shell, const char *path);
+static BOOLEAN shell_parse_ls_args(const char *arg, BOOLEAN *long_mode, char *path_out, UINTN path_out_len);
+static void shell_print_history(Shell *shell);
+static void shell_print_help(Shell *shell, const char *topic);
 static BOOLEAN shell_normalize_path(const char *cwd, const char *input, char *out, UINTN out_len);
 static BOOLEAN shell_path_to_char16(const char *path, CHAR16 *out, UINTN out_len);
 static void shell_print_file_name(Shell *shell, const CHAR16 *name);
@@ -28,13 +49,24 @@ static void shell_cmd_pwd(Shell *shell);
 static void shell_cmd_mkdir(Shell *shell, const char *arg);
 static void shell_cmd_touch(Shell *shell, const char *arg);
 static void shell_cmd_cp(Shell *shell, const char *src_arg, const char *dst_arg);
+static EFI_STATUS shell_copy_file(Shell *shell, const char *src_raw, const char *dst_raw);
+static void shell_cmd_rm(Shell *shell, const char *arg);
+static void shell_cmd_mv(Shell *shell, const char *src_arg, const char *dst_arg);
+static void shell_cmd_hexdump(Shell *shell, const char *arg);
+static void shell_cmd_history(Shell *shell);
+static void shell_cmd_viewbmp(Shell *shell, const char *arg);
+static void shell_cmd_initfs(Shell *shell);
 static void shell_cmd_theme(Shell *shell, const char *arg);
 static void shell_cmd_time(Shell *shell);
 static void shell_cmd_memmap(Shell *shell);
 static void shell_print_u64(Shell *shell, UINT64 value);
 static void shell_print_padded_u64(Shell *shell, UINT64 value, UINTN width);
+static void shell_print_padded_hex8(Shell *shell, UINT8 value);
 static const char *shell_mem_type_name(UINT32 type);
 static void shell_apply_theme(Shell *shell, UINT32 fg, UINT32 bg, BOOLEAN clear_screen);
+static void shell_save_settings(Shell *shell);
+static void shell_load_settings(Shell *shell);
+static BOOLEAN shell_draw_bmp_centered(Shell *shell, const UINT8 *bmp, UINTN bmp_size);
 static void shell_history_add(Shell *shell, const char *line);
 static void *shell_alloc(Shell *shell, UINTN size);
 static void shell_free(Shell *shell, void *ptr);
@@ -65,6 +97,7 @@ void shell_init(Shell *shell, EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st, Gfx
     shell->cwd[0] = '\\';
     shell->cwd[1] = '\0';
     shell->history_count = 0;
+    shell_load_settings(shell);
 
     shell_clear(shell);
 }
@@ -124,6 +157,17 @@ static void shell_set_cursor(Shell *shell, UINTN row, UINTN col) {
     }
     shell->cursor_row = row;
     shell->cursor_col = col;
+}
+
+static UINT16 shell_read_le16(const UINT8 *p) {
+    return (UINT16)(p[0] | ((UINT16)p[1] << 8));
+}
+
+static UINT32 shell_read_le32(const UINT8 *p) {
+    return (UINT32)(p[0] |
+                    ((UINT32)p[1] << 8) |
+                    ((UINT32)p[2] << 16) |
+                    ((UINT32)p[3] << 24));
 }
 
 // Render one printable character into the shell grid.
@@ -205,7 +249,8 @@ static void shell_redraw_input(
     UINTN field_len,
     const char *line,
     UINTN len,
-    UINTN cursor
+    UINTN cursor,
+    BOOLEAN show_cursor
 ) {
     UINTN px = shell->margin_x + col * FONT_CHAR_WIDTH;
     UINTN py = shell->margin_y + row * FONT_CHAR_HEIGHT;
@@ -216,6 +261,25 @@ static void shell_redraw_input(
         shell_putc(shell, line[i]);
     }
     shell_set_cursor(shell, row, col + cursor);
+
+    if (show_cursor) {
+        UINTN draw_col = col + cursor;
+        if (draw_col >= shell->cols) {
+            draw_col = shell->cols - 1;
+        }
+        shell_draw_cursor(shell, row, draw_col);
+    }
+}
+
+// Draw a simple visible caret at the current input position.
+static void shell_draw_cursor(Shell *shell, UINTN row, UINTN col) {
+    if (shell == NULL || shell->gfx == NULL) {
+        return;
+    }
+
+    UINTN px = shell->margin_x + col * FONT_CHAR_WIDTH;
+    UINTN py = shell->margin_y + row * FONT_CHAR_HEIGHT + (FONT_CHAR_HEIGHT - 2);
+    gfx_fill_rect(shell->gfx, px, py, FONT_CHAR_WIDTH, 2, shell->fg_color);
 }
 
 // Blocking line editor using UEFI keyboard input.
@@ -240,6 +304,7 @@ static EFI_STATUS shell_read_line(Shell *shell, char *line, UINTN max_len) {
     UINTN cursor = 0;
     INTN history_nav = -1;
     line[0] = '\0';
+    shell_redraw_input(shell, start_row, start_col, field_len, line, len, cursor, TRUE);
 
     while (1) {
         UINTN idx;
@@ -259,12 +324,12 @@ static EFI_STATUS shell_read_line(Shell *shell, char *line, UINTN max_len) {
             if (key.ScanCode == SCAN_LEFT) {
                 if (cursor > 0) {
                     cursor--;
-                    shell_set_cursor(shell, start_row, start_col + cursor);
+                    shell_redraw_input(shell, start_row, start_col, field_len, line, len, cursor, TRUE);
                 }
             } else if (key.ScanCode == SCAN_RIGHT) {
                 if (cursor < len) {
                     cursor++;
-                    shell_set_cursor(shell, start_row, start_col + cursor);
+                    shell_redraw_input(shell, start_row, start_col, field_len, line, len, cursor, TRUE);
                 }
             } else if (key.ScanCode == SCAN_UP) {
                 if (shell->history_count > 0) {
@@ -282,7 +347,7 @@ static EFI_STATUS shell_read_line(Shell *shell, char *line, UINTN max_len) {
                     len = i;
                     cursor = len;
                     line[len] = '\0';
-                    shell_redraw_input(shell, start_row, start_col, field_len, line, len, cursor);
+                    shell_redraw_input(shell, start_row, start_col, field_len, line, len, cursor, TRUE);
                 }
             } else if (key.ScanCode == SCAN_DOWN) {
                 if (history_nav >= 0) {
@@ -302,7 +367,7 @@ static EFI_STATUS shell_read_line(Shell *shell, char *line, UINTN max_len) {
                         cursor = 0;
                         line[0] = '\0';
                     }
-                    shell_redraw_input(shell, start_row, start_col, field_len, line, len, cursor);
+                    shell_redraw_input(shell, start_row, start_col, field_len, line, len, cursor, TRUE);
                 }
             }
             continue;
@@ -312,6 +377,8 @@ static EFI_STATUS shell_read_line(Shell *shell, char *line, UINTN max_len) {
 
         if (uc == (CHAR16)'\r') {
             line[len] = '\0';
+            // Remove caret before committing the line so printed text remains clean.
+            shell_redraw_input(shell, start_row, start_col, field_len, line, len, cursor, FALSE);
             shell_set_cursor(shell, start_row, start_col + len);
             shell_putc(shell, '\n');
             return EFI_SUCCESS;
@@ -325,7 +392,7 @@ static EFI_STATUS shell_read_line(Shell *shell, char *line, UINTN max_len) {
                 len--;
                 cursor--;
                 history_nav = -1;
-                shell_redraw_input(shell, start_row, start_col, field_len, line, len, cursor);
+                shell_redraw_input(shell, start_row, start_col, field_len, line, len, cursor, TRUE);
             }
             continue;
         }
@@ -340,7 +407,7 @@ static EFI_STATUS shell_read_line(Shell *shell, char *line, UINTN max_len) {
             cursor++;
             line[len] = '\0';
             history_nav = -1;
-            shell_redraw_input(shell, start_row, start_col, field_len, line, len, cursor);
+            shell_redraw_input(shell, start_row, start_col, field_len, line, len, cursor, TRUE);
         }
     }
 }
@@ -420,6 +487,15 @@ static void shell_print_padded_u64(Shell *shell, UINT64 value, UINTN width) {
     shell_print(shell, buf);
 }
 
+static void shell_print_padded_hex8(Shell *shell, UINT8 value) {
+    char hex[4];
+    static const char digits[] = "0123456789ABCDEF";
+    hex[0] = digits[(value >> 4) & 0xF];
+    hex[1] = digits[value & 0xF];
+    hex[2] = '\0';
+    shell_print(shell, hex);
+}
+
 static const char *shell_mem_type_name(UINT32 type) {
     switch (type) {
     case EfiReservedMemoryType: return "Reserved";
@@ -446,6 +522,328 @@ static void shell_apply_theme(Shell *shell, UINT32 fg, UINT32 bg, BOOLEAN clear_
     if (clear_screen) {
         shell_clear(shell);
     }
+}
+
+static void shell_save_settings(Shell *shell) {
+    if (shell == NULL) {
+        return;
+    }
+
+    EFI_STATUS status = shell_ensure_dir_tree(shell, "\\HATTEROS\\system\\config");
+    if (EFI_ERROR(status)) {
+        return;
+    }
+
+    EFI_FILE_PROTOCOL *cfg = NULL;
+    status = shell_open_path(
+        shell,
+        SHELL_CFG_PATH,
+        EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE,
+        0,
+        &cfg
+    );
+    if (EFI_ERROR(status) || cfg == NULL) {
+        return;
+    }
+
+    EFI_STATUS info_status = EFI_SUCCESS;
+    EFI_FILE_INFO *info = shell_get_file_info(shell, cfg, &info_status);
+    if (info != NULL) {
+        EFI_GUID file_info_guid = EFI_FILE_INFO_ID;
+        info->FileSize = 0;
+        info->PhysicalSize = 0;
+        uefi_call_wrapper(cfg->SetInfo, 4, cfg, &file_info_guid, info->Size, info);
+        shell_free(shell, info);
+    }
+
+    ShellConfigFile data;
+    data.magic = SHELL_CFG_MAGIC;
+    data.version = SHELL_CFG_VERSION;
+    data.fg_color = shell->fg_color;
+    data.bg_color = shell->bg_color;
+    data.prompt_show_path = shell->prompt_show_path ? 1 : 0;
+    data.reserved[0] = 0;
+    data.reserved[1] = 0;
+    data.reserved[2] = 0;
+
+    uefi_call_wrapper(cfg->SetPosition, 2, cfg, 0);
+    UINTN write_size = sizeof(data);
+    uefi_call_wrapper(cfg->Write, 3, cfg, &write_size, &data);
+    uefi_call_wrapper(cfg->Close, 1, cfg);
+}
+
+static void shell_load_settings(Shell *shell) {
+    if (shell == NULL) {
+        return;
+    }
+
+    EFI_FILE_PROTOCOL *cfg = NULL;
+    EFI_STATUS status = shell_open_path(shell, SHELL_CFG_PATH, EFI_FILE_MODE_READ, 0, &cfg);
+    if (EFI_ERROR(status) || cfg == NULL) {
+        return;
+    }
+
+    ShellConfigFile data;
+    UINTN read_size = sizeof(data);
+    status = uefi_call_wrapper(cfg->Read, 3, cfg, &read_size, &data);
+    uefi_call_wrapper(cfg->Close, 1, cfg);
+    if (EFI_ERROR(status) || read_size < sizeof(data)) {
+        return;
+    }
+
+    if (data.magic != SHELL_CFG_MAGIC || data.version != SHELL_CFG_VERSION) {
+        return;
+    }
+
+    shell->fg_color = data.fg_color;
+    shell->bg_color = data.bg_color;
+    shell->prompt_show_path = (data.prompt_show_path != 0);
+}
+
+static BOOLEAN shell_draw_bmp_centered(Shell *shell, const UINT8 *bmp, UINTN bmp_size) {
+    if (shell == NULL || shell->gfx == NULL || bmp == NULL || bmp_size < 54) {
+        return FALSE;
+    }
+    if (bmp[0] != 'B' || bmp[1] != 'M') {
+        return FALSE;
+    }
+
+    UINT32 pixel_offset = shell_read_le32(bmp + 10);
+    UINT32 dib_size = shell_read_le32(bmp + 14);
+    INT32 width = (INT32)shell_read_le32(bmp + 18);
+    INT32 height = (INT32)shell_read_le32(bmp + 22);
+    UINT16 planes = shell_read_le16(bmp + 26);
+    UINT16 bits_per_pixel = shell_read_le16(bmp + 28);
+    UINT32 compression = shell_read_le32(bmp + 30);
+
+    if (dib_size < 40 || width <= 0 || height == 0 || planes != 1) {
+        return FALSE;
+    }
+    if (compression != 0 || (bits_per_pixel != 24 && bits_per_pixel != 32)) {
+        return FALSE;
+    }
+
+    UINTN img_w = (UINTN)width;
+    UINTN img_h = (height < 0) ? (UINTN)(-height) : (UINTN)height;
+    UINTN bpp = bits_per_pixel / 8;
+    UINTN row_stride = (img_w * bpp + 3) & ~(UINTN)3;
+    if (pixel_offset > bmp_size || img_h > ((UINTN)-1) / row_stride) {
+        return FALSE;
+    }
+    if ((row_stride * img_h) > (bmp_size - pixel_offset)) {
+        return FALSE;
+    }
+
+    UINTN src_x = 0;
+    UINTN src_y = 0;
+    UINTN draw_w = img_w;
+    UINTN draw_h = img_h;
+    UINTN dst_x = 0;
+    UINTN dst_y = 0;
+
+    if (draw_w > shell->gfx->width) {
+        src_x = (draw_w - shell->gfx->width) / 2;
+        draw_w = shell->gfx->width;
+    } else {
+        dst_x = (shell->gfx->width - draw_w) / 2;
+    }
+    if (draw_h > shell->gfx->height) {
+        src_y = (draw_h - shell->gfx->height) / 2;
+        draw_h = shell->gfx->height;
+    } else {
+        dst_y = (shell->gfx->height - draw_h) / 2;
+    }
+
+    const UINT8 *pixel_base = bmp + pixel_offset;
+    BOOLEAN top_down = (height < 0);
+    for (UINTN y = 0; y < draw_h; y++) {
+        UINTN src_row = src_y + y;
+        UINTN bmp_row = top_down ? src_row : (img_h - 1 - src_row);
+        const UINT8 *row = pixel_base + bmp_row * row_stride;
+        const UINT8 *src = row + src_x * bpp;
+        for (UINTN x = 0; x < draw_w; x++) {
+            UINT8 b = src[x * bpp + 0];
+            UINT8 g = src[x * bpp + 1];
+            UINT8 r = src[x * bpp + 2];
+            gfx_put_pixel(shell->gfx, dst_x + x, dst_y + y, ((UINT32)r << 16) | ((UINT32)g << 8) | b);
+        }
+    }
+
+    return TRUE;
+}
+
+static EFI_STATUS shell_ensure_dir(Shell *shell, const char *path) {
+    EFI_FILE_PROTOCOL *dir = NULL;
+    EFI_STATUS status = shell_open_path(
+        shell,
+        path,
+        EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE,
+        EFI_FILE_DIRECTORY,
+        &dir
+    );
+    if (!EFI_ERROR(status) && dir != NULL) {
+        uefi_call_wrapper(dir->Close, 1, dir);
+    }
+    return status;
+}
+
+static EFI_STATUS shell_ensure_dir_tree(Shell *shell, const char *path) {
+    char abs[SHELL_PATH_MAX];
+    if (!shell_normalize_path(shell->cwd, path, abs, sizeof(abs))) {
+        return EFI_INVALID_PARAMETER;
+    }
+    if (abs[0] == '\\' && abs[1] == '\0') {
+        return EFI_SUCCESS;
+    }
+
+    char partial[SHELL_PATH_MAX];
+    partial[0] = '\\';
+    partial[1] = '\0';
+    UINTN p = 1;
+
+    UINTN i = 1;
+    while (abs[i] != '\0') {
+        while (abs[i] == '\\') {
+            i++;
+        }
+        if (abs[i] == '\0') {
+            break;
+        }
+
+        char token[SHELL_PATH_MAX];
+        UINTN t = 0;
+        while (abs[i] != '\0' && abs[i] != '\\' && t + 1 < sizeof(token)) {
+            token[t++] = abs[i++];
+        }
+        token[t] = '\0';
+        if (token[0] == '\0') {
+            continue;
+        }
+
+        if (p > 1) {
+            if (p + 1 >= sizeof(partial)) {
+                return EFI_INVALID_PARAMETER;
+            }
+            partial[p++] = '\\';
+        }
+        for (UINTN k = 0; token[k] != '\0'; k++) {
+            if (p + 1 >= sizeof(partial)) {
+                return EFI_INVALID_PARAMETER;
+            }
+            partial[p++] = token[k];
+        }
+        partial[p] = '\0';
+
+        EFI_STATUS status = shell_ensure_dir(shell, partial);
+        if (EFI_ERROR(status)) {
+            return status;
+        }
+    }
+
+    return EFI_SUCCESS;
+}
+
+static BOOLEAN shell_parse_ls_args(const char *arg, BOOLEAN *long_mode, char *path_out, UINTN path_out_len) {
+    if (long_mode == NULL || path_out == NULL || path_out_len < 2) {
+        return FALSE;
+    }
+
+    *long_mode = FALSE;
+    path_out[0] = '.';
+    path_out[1] = '\0';
+
+    const char *raw = (arg != NULL) ? arg : "";
+    raw = u_trim_left((char *)raw);
+    if (*raw == '\0') {
+        return TRUE;
+    }
+
+    if (u_strcmp(raw, "-l") == 0) {
+        *long_mode = TRUE;
+        return TRUE;
+    }
+
+    if (u_startswith(raw, "-l ")) {
+        *long_mode = TRUE;
+        raw = u_trim_left((char *)(raw + 2));
+    }
+
+    UINTN i = 0;
+    while (raw[i] != '\0' && i + 1 < path_out_len) {
+        path_out[i] = raw[i];
+        i++;
+    }
+    path_out[i] = '\0';
+    return TRUE;
+}
+
+static void shell_print_history(Shell *shell) {
+    if (shell->history_count == 0) {
+        shell_println(shell, "history: empty");
+        return;
+    }
+    for (UINTN i = 0; i < shell->history_count; i++) {
+        shell_print_u64(shell, i + 1);
+        shell_print(shell, "  ");
+        shell_println(shell, shell->history[i]);
+    }
+}
+
+static void shell_print_help(Shell *shell, const char *topic) {
+    if (topic == NULL || topic[0] == '\0') {
+        shell_println(shell, "Commands:");
+        shell_println(shell, "  help [cmd]      - list commands or command help");
+        shell_println(shell, "  clear           - clear the screen");
+        shell_println(shell, "  echo <text>     - print text");
+        shell_println(shell, "  pwd             - print current directory");
+        shell_println(shell, "  cd <path>       - change current directory");
+        shell_println(shell, "  ls [-l] [path]  - list files");
+        shell_println(shell, "  cat <path>      - print file contents");
+        shell_println(shell, "  mkdir [-p] <p>  - create directory");
+        shell_println(shell, "  touch <p>       - create empty file");
+        shell_println(shell, "  cp <s> <d>      - copy file");
+        shell_println(shell, "  rm <path>       - delete file");
+        shell_println(shell, "  mv <s> <d>      - move/rename file");
+        shell_println(shell, "  hexdump <path>  - hex view of file");
+        shell_println(shell, "  history         - show command history");
+        shell_println(shell, "  viewbmp <path>  - full-screen BMP preview");
+        shell_println(shell, "  initfs          - create /HATTEROS tree");
+        shell_println(shell, "  theme ...       - shell colors/prompt");
+        shell_println(shell, "  time            - read UEFI clock");
+        shell_println(shell, "  memmap          - summarize memory map");
+        shell_println(shell, "  info            - show system info");
+        shell_println(shell, "  reboot          - reboot machine");
+        return;
+    }
+
+    if (u_strcmp(topic, "ls") == 0) {
+        shell_println(shell, "ls [-l] [path]");
+        shell_println(shell, "  -l shows type, size, and modified timestamp.");
+        return;
+    }
+    if (u_strcmp(topic, "mkdir") == 0) {
+        shell_println(shell, "mkdir [-p] <path>");
+        shell_println(shell, "  -p creates missing parent directories.");
+        return;
+    }
+    if (u_strcmp(topic, "theme") == 0) {
+        shell_println(shell, "theme default|light|amber|prompt <full|short>");
+        shell_println(shell, "  Changes are saved to /HATTEROS/system/config/shell.cfg.");
+        return;
+    }
+    if (u_strcmp(topic, "initfs") == 0) {
+        shell_println(shell, "initfs");
+        shell_println(shell, "  Creates /HATTEROS/system/*, /HATTEROS/user/*, /HATTEROS/bin.");
+        return;
+    }
+    if (u_strcmp(topic, "viewbmp") == 0) {
+        shell_println(shell, "viewbmp <path>");
+        shell_println(shell, "  Supports uncompressed 24-bit or 32-bit BMP.");
+        return;
+    }
+
+    shell_print(shell, "No detailed help for: ");
+    shell_println(shell, topic);
 }
 
 // Open ESP root directory where this EFI app was loaded from.
@@ -693,14 +1091,11 @@ static void shell_cmd_ls(Shell *shell, const char *arg) {
     EFI_FILE_PROTOCOL *dir = NULL;
     CHAR16 path16[SHELL_PATH_MAX];
     char resolved[SHELL_PATH_MAX];
-    const char *raw = (arg != NULL) ? arg : "";
-    raw = u_trim_left((char *)raw);
+    char path_arg[SHELL_PATH_MAX];
+    BOOLEAN long_mode = FALSE;
+    shell_parse_ls_args(arg, &long_mode, path_arg, sizeof(path_arg));
 
-    if (*raw == '\0') {
-        raw = ".";
-    }
-
-    if (!shell_normalize_path(shell->cwd, raw, resolved, sizeof(resolved)) ||
+    if (!shell_normalize_path(shell->cwd, path_arg, resolved, sizeof(resolved)) ||
         !shell_path_to_char16(resolved, path16, SHELL_PATH_MAX)) {
         shell_println(shell, "ls: path too long");
         return;
@@ -727,7 +1122,29 @@ static void shell_cmd_ls(Shell *shell, const char *arg) {
         if (meta != NULL) {
             status = uefi_call_wrapper(dir->GetInfo, 4, dir, &file_info_guid, &meta_size, meta);
             if (!EFI_ERROR(status) && (meta->Attribute & EFI_FILE_DIRECTORY) == 0) {
-                shell_print(shell, "      ");
+                if (long_mode) {
+                    char size_buf[32];
+                    u_u64_to_dec(meta->FileSize, size_buf, sizeof(size_buf));
+                    shell_print(shell, "[FIL] ");
+                    shell_print(shell, size_buf);
+                    shell_print(shell, "  ");
+                    if (meta->ModificationTime.Year > 0) {
+                        shell_print_u64(shell, meta->ModificationTime.Year);
+                        shell_putc(shell, '-');
+                        shell_print_padded_u64(shell, meta->ModificationTime.Month, 2);
+                        shell_putc(shell, '-');
+                        shell_print_padded_u64(shell, meta->ModificationTime.Day, 2);
+                        shell_putc(shell, ' ');
+                        shell_print_padded_u64(shell, meta->ModificationTime.Hour, 2);
+                        shell_putc(shell, ':');
+                        shell_print_padded_u64(shell, meta->ModificationTime.Minute, 2);
+                    } else {
+                        shell_print(shell, "---- -- -- --:--");
+                    }
+                    shell_print(shell, "  ");
+                } else {
+                    shell_print(shell, "      ");
+                }
                 shell_print_file_name(shell, meta->FileName);
                 shell_free(shell, meta);
                 uefi_call_wrapper(dir->Close, 1, dir);
@@ -768,7 +1185,27 @@ static void shell_cmd_ls(Shell *shell, const char *arg) {
             continue;
         }
 
-        if ((info->Attribute & EFI_FILE_DIRECTORY) != 0) {
+        if (long_mode) {
+            char size_buf[32];
+            u_u64_to_dec(info->FileSize, size_buf, sizeof(size_buf));
+            shell_print(shell, (info->Attribute & EFI_FILE_DIRECTORY) ? "[DIR] " : "[FIL] ");
+            shell_print(shell, size_buf);
+            shell_print(shell, "  ");
+            if (info->ModificationTime.Year > 0) {
+                shell_print_u64(shell, info->ModificationTime.Year);
+                shell_putc(shell, '-');
+                shell_print_padded_u64(shell, info->ModificationTime.Month, 2);
+                shell_putc(shell, '-');
+                shell_print_padded_u64(shell, info->ModificationTime.Day, 2);
+                shell_putc(shell, ' ');
+                shell_print_padded_u64(shell, info->ModificationTime.Hour, 2);
+                shell_putc(shell, ':');
+                shell_print_padded_u64(shell, info->ModificationTime.Minute, 2);
+            } else {
+                shell_print(shell, "---- -- -- --:--");
+            }
+            shell_print(shell, "  ");
+        } else if ((info->Attribute & EFI_FILE_DIRECTORY) != 0) {
             shell_print(shell, "[DIR] ");
         } else {
             shell_print(shell, "      ");
@@ -989,7 +1426,29 @@ static void shell_cmd_mkdir(Shell *shell, const char *arg) {
     const char *raw = (arg != NULL) ? arg : "";
     raw = u_trim_left((char *)raw);
     if (*raw == '\0') {
-        shell_println(shell, "mkdir: usage: mkdir <path>");
+        shell_println(shell, "mkdir: usage: mkdir [-p] <path>");
+        return;
+    }
+
+    BOOLEAN parents = FALSE;
+    if (u_strcmp(raw, "-p") == 0) {
+        shell_println(shell, "mkdir: usage: mkdir [-p] <path>");
+        return;
+    }
+    if (u_startswith(raw, "-p ")) {
+        parents = TRUE;
+        raw = u_trim_left((char *)(raw + 2));
+        if (*raw == '\0') {
+            shell_println(shell, "mkdir: usage: mkdir [-p] <path>");
+            return;
+        }
+    }
+
+    if (parents) {
+        EFI_STATUS st = shell_ensure_dir_tree(shell, raw);
+        if (EFI_ERROR(st)) {
+            shell_print_error_status(shell, "mkdir -p failed", st);
+        }
         return;
     }
 
@@ -1059,14 +1518,15 @@ static void shell_cmd_touch(Shell *shell, const char *arg) {
     uefi_call_wrapper(file->Close, 1, file);
 }
 
-static void shell_cmd_cp(Shell *shell, const char *src_arg, const char *dst_arg) {
-    const char *src_raw = (src_arg != NULL) ? src_arg : "";
-    const char *dst_raw = (dst_arg != NULL) ? dst_arg : "";
-    src_raw = u_trim_left((char *)src_raw);
-    dst_raw = u_trim_left((char *)dst_raw);
-    if (*src_raw == '\0' || *dst_raw == '\0') {
-        shell_println(shell, "cp: usage: cp <src> <dst>");
-        return;
+static EFI_STATUS shell_copy_file(Shell *shell, const char *src_raw, const char *dst_raw) {
+    char src_abs[SHELL_PATH_MAX];
+    char dst_abs[SHELL_PATH_MAX];
+    if (!shell_normalize_path(shell->cwd, src_raw, src_abs, sizeof(src_abs)) ||
+        !shell_normalize_path(shell->cwd, dst_raw, dst_abs, sizeof(dst_abs))) {
+        return EFI_INVALID_PARAMETER;
+    }
+    if (u_strcmp(src_abs, dst_abs) == 0) {
+        return EFI_INVALID_PARAMETER;
     }
 
     EFI_FILE_PROTOCOL *src = NULL;
@@ -1076,34 +1536,32 @@ static void shell_cmd_cp(Shell *shell, const char *src_arg, const char *dst_arg)
     EFI_FILE_INFO *dst_info = NULL;
     EFI_STATUS status = shell_open_path(shell, src_raw, EFI_FILE_MODE_READ, 0, &src);
     if (EFI_ERROR(status) || src == NULL) {
-        shell_print_error_status(shell, "cp open src failed", status);
         goto out;
     }
 
     EFI_STATUS info_status = EFI_SUCCESS;
     src_info = shell_get_file_info(shell, src, &info_status);
     if (src_info == NULL) {
-        shell_print_error_status(shell, "cp src info failed", info_status);
+        status = info_status;
         goto out;
     }
     if ((src_info->Attribute & EFI_FILE_DIRECTORY) != 0) {
-        shell_println(shell, "cp: source is a directory");
+        status = EFI_ACCESS_DENIED;
         goto out;
     }
 
     status = shell_open_path(shell, dst_raw, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0, &dst);
     if (EFI_ERROR(status) || dst == NULL) {
-        shell_print_error_status(shell, "cp open dst failed", status);
         goto out;
     }
 
     dst_info = shell_get_file_info(shell, dst, &info_status);
     if (dst_info == NULL) {
-        shell_print_error_status(shell, "cp dst info failed", info_status);
+        status = info_status;
         goto out;
     }
     if ((dst_info->Attribute & EFI_FILE_DIRECTORY) != 0) {
-        shell_println(shell, "cp: destination is a directory");
+        status = EFI_ACCESS_DENIED;
         goto out;
     }
 
@@ -1112,7 +1570,6 @@ static void shell_cmd_cp(Shell *shell, const char *src_arg, const char *dst_arg)
     dst_info->PhysicalSize = 0;
     status = uefi_call_wrapper(dst->SetInfo, 4, dst, &file_info_guid, dst_info->Size, dst_info);
     if (EFI_ERROR(status)) {
-        shell_print_error_status(shell, "cp truncate dst failed", status);
         goto out;
     }
 
@@ -1121,7 +1578,7 @@ static void shell_cmd_cp(Shell *shell, const char *src_arg, const char *dst_arg)
 
     buf = (UINT8 *)shell_alloc(shell, FILE_IO_CHUNK);
     if (buf == NULL) {
-        shell_println(shell, "cp: out of memory");
+        status = EFI_OUT_OF_RESOURCES;
         goto out;
     }
 
@@ -1129,7 +1586,6 @@ static void shell_cmd_cp(Shell *shell, const char *src_arg, const char *dst_arg)
         UINTN read_size = FILE_IO_CHUNK;
         status = uefi_call_wrapper(src->Read, 3, src, &read_size, buf);
         if (EFI_ERROR(status)) {
-            shell_print_error_status(shell, "cp read failed", status);
             goto out;
         }
         if (read_size == 0) {
@@ -1139,10 +1595,11 @@ static void shell_cmd_cp(Shell *shell, const char *src_arg, const char *dst_arg)
         UINTN write_size = read_size;
         status = uefi_call_wrapper(dst->Write, 3, dst, &write_size, buf);
         if (EFI_ERROR(status) || write_size != read_size) {
-            shell_print_error_status(shell, "cp write failed", EFI_ERROR(status) ? status : EFI_DEVICE_ERROR);
+            status = EFI_ERROR(status) ? status : EFI_DEVICE_ERROR;
             goto out;
         }
     }
+    status = EFI_SUCCESS;
 
 out:
     if (src_info != NULL) {
@@ -1160,6 +1617,265 @@ out:
     if (dst != NULL) {
         uefi_call_wrapper(dst->Close, 1, dst);
     }
+    return status;
+}
+
+static void shell_cmd_cp(Shell *shell, const char *src_arg, const char *dst_arg) {
+    const char *src_raw = (src_arg != NULL) ? src_arg : "";
+    const char *dst_raw = (dst_arg != NULL) ? dst_arg : "";
+    src_raw = u_trim_left((char *)src_raw);
+    dst_raw = u_trim_left((char *)dst_raw);
+    if (*src_raw == '\0' || *dst_raw == '\0') {
+        shell_println(shell, "cp: usage: cp <src> <dst>");
+        return;
+    }
+
+    EFI_STATUS st = shell_copy_file(shell, src_raw, dst_raw);
+    if (EFI_ERROR(st)) {
+        shell_print_error_status(shell, "cp failed", st);
+    }
+}
+
+static void shell_cmd_rm(Shell *shell, const char *arg) {
+    const char *raw = (arg != NULL) ? arg : "";
+    raw = u_trim_left((char *)raw);
+    if (*raw == '\0') {
+        shell_println(shell, "rm: usage: rm <path>");
+        return;
+    }
+
+    EFI_FILE_PROTOCOL *node = NULL;
+    EFI_STATUS status = shell_open_path(shell, raw, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0, &node);
+    if (EFI_ERROR(status) || node == NULL) {
+        shell_print_error_status(shell, "rm open failed", status);
+        return;
+    }
+
+    EFI_STATUS info_status = EFI_SUCCESS;
+    EFI_FILE_INFO *info = shell_get_file_info(shell, node, &info_status);
+    if (info == NULL) {
+        shell_print_error_status(shell, "rm info failed", info_status);
+        uefi_call_wrapper(node->Close, 1, node);
+        return;
+    }
+    if ((info->Attribute & EFI_FILE_DIRECTORY) != 0) {
+        shell_println(shell, "rm: refusing to remove a directory");
+        shell_free(shell, info);
+        uefi_call_wrapper(node->Close, 1, node);
+        return;
+    }
+    shell_free(shell, info);
+
+    status = uefi_call_wrapper(node->Delete, 1, node);
+    if (EFI_ERROR(status)) {
+        shell_print_error_status(shell, "rm delete failed", status);
+    }
+}
+
+static void shell_cmd_mv(Shell *shell, const char *src_arg, const char *dst_arg) {
+    const char *src_raw = (src_arg != NULL) ? src_arg : "";
+    const char *dst_raw = (dst_arg != NULL) ? dst_arg : "";
+    src_raw = u_trim_left((char *)src_raw);
+    dst_raw = u_trim_left((char *)dst_raw);
+    if (*src_raw == '\0' || *dst_raw == '\0') {
+        shell_println(shell, "mv: usage: mv <src> <dst>");
+        return;
+    }
+
+    EFI_STATUS st = shell_copy_file(shell, src_raw, dst_raw);
+    if (EFI_ERROR(st)) {
+        shell_print_error_status(shell, "mv copy failed", st);
+        return;
+    }
+
+    EFI_FILE_PROTOCOL *node = NULL;
+    st = shell_open_path(shell, src_raw, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0, &node);
+    if (EFI_ERROR(st) || node == NULL) {
+        shell_print_error_status(shell, "mv cleanup open failed", st);
+        return;
+    }
+    st = uefi_call_wrapper(node->Delete, 1, node);
+    if (EFI_ERROR(st)) {
+        shell_print_error_status(shell, "mv cleanup delete failed", st);
+    }
+}
+
+static void shell_cmd_hexdump(Shell *shell, const char *arg) {
+    const char *raw = (arg != NULL) ? arg : "";
+    raw = u_trim_left((char *)raw);
+    if (*raw == '\0') {
+        shell_println(shell, "hexdump: usage: hexdump <path>");
+        return;
+    }
+
+    EFI_FILE_PROTOCOL *file = NULL;
+    EFI_STATUS status = shell_open_path(shell, raw, EFI_FILE_MODE_READ, 0, &file);
+    if (EFI_ERROR(status) || file == NULL) {
+        shell_print_error_status(shell, "hexdump open failed", status);
+        return;
+    }
+
+    EFI_STATUS info_status = EFI_SUCCESS;
+    EFI_FILE_INFO *info = shell_get_file_info(shell, file, &info_status);
+    if (info != NULL) {
+        if ((info->Attribute & EFI_FILE_DIRECTORY) != 0) {
+            shell_println(shell, "hexdump: path is a directory");
+            shell_free(shell, info);
+            uefi_call_wrapper(file->Close, 1, file);
+            return;
+        }
+        shell_free(shell, info);
+    }
+
+    UINT8 *buf = (UINT8 *)shell_alloc(shell, FILE_IO_CHUNK);
+    if (buf == NULL) {
+        shell_println(shell, "hexdump: out of memory");
+        uefi_call_wrapper(file->Close, 1, file);
+        return;
+    }
+
+    UINT64 offset = 0;
+    while (1) {
+        UINTN read_size = FILE_IO_CHUNK;
+        status = uefi_call_wrapper(file->Read, 3, file, &read_size, buf);
+        if (EFI_ERROR(status) || read_size == 0) {
+            break;
+        }
+
+        for (UINTN row = 0; row < read_size; row += HEXDUMP_COLS) {
+            UINTN row_len = ((read_size - row) > HEXDUMP_COLS) ? HEXDUMP_COLS : (read_size - row);
+            char off[32];
+            u_u64_to_hex(offset + row, off, sizeof(off));
+            shell_print(shell, off);
+            shell_print(shell, ": ");
+
+            for (UINTN i = 0; i < HEXDUMP_COLS; i++) {
+                if (i < row_len) {
+                    shell_print_padded_hex8(shell, buf[row + i]);
+                    shell_putc(shell, ' ');
+                } else {
+                    shell_print(shell, "   ");
+                }
+            }
+
+            shell_print(shell, " |");
+            for (UINTN i = 0; i < row_len; i++) {
+                char c = (char)buf[row + i];
+                if (c < 32 || c > 126) {
+                    c = '.';
+                }
+                shell_putc(shell, c);
+            }
+            shell_println(shell, "|");
+        }
+
+        offset += read_size;
+    }
+
+    shell_free(shell, buf);
+    uefi_call_wrapper(file->Close, 1, file);
+}
+
+static void shell_cmd_history(Shell *shell) {
+    shell_print_history(shell);
+}
+
+static void shell_cmd_viewbmp(Shell *shell, const char *arg) {
+    const char *raw = (arg != NULL) ? arg : "";
+    raw = u_trim_left((char *)raw);
+    if (*raw == '\0') {
+        shell_println(shell, "viewbmp: usage: viewbmp <path>");
+        return;
+    }
+
+    EFI_FILE_PROTOCOL *file = NULL;
+    EFI_STATUS status = shell_open_path(shell, raw, EFI_FILE_MODE_READ, 0, &file);
+    if (EFI_ERROR(status) || file == NULL) {
+        shell_print_error_status(shell, "viewbmp open failed", status);
+        return;
+    }
+
+    EFI_STATUS info_status = EFI_SUCCESS;
+    EFI_FILE_INFO *info = shell_get_file_info(shell, file, &info_status);
+    if (info == NULL) {
+        shell_print_error_status(shell, "viewbmp info failed", info_status);
+        uefi_call_wrapper(file->Close, 1, file);
+        return;
+    }
+    if ((info->Attribute & EFI_FILE_DIRECTORY) != 0 || info->FileSize == 0 || info->FileSize > 32U * 1024U * 1024U) {
+        shell_println(shell, "viewbmp: invalid file");
+        shell_free(shell, info);
+        uefi_call_wrapper(file->Close, 1, file);
+        return;
+    }
+
+    UINTN size = (UINTN)info->FileSize;
+    shell_free(shell, info);
+    UINT8 *data = (UINT8 *)shell_alloc(shell, size);
+    if (data == NULL) {
+        shell_println(shell, "viewbmp: out of memory");
+        uefi_call_wrapper(file->Close, 1, file);
+        return;
+    }
+
+    UINTN read_size = size;
+    status = uefi_call_wrapper(file->Read, 3, file, &read_size, data);
+    uefi_call_wrapper(file->Close, 1, file);
+    if (EFI_ERROR(status) || read_size != size) {
+        shell_print_error_status(shell, "viewbmp read failed", status);
+        shell_free(shell, data);
+        return;
+    }
+
+    if (!shell_draw_bmp_centered(shell, data, size)) {
+        shell_println(shell, "viewbmp: unsupported BMP (need uncompressed 24/32-bit)");
+        shell_free(shell, data);
+        return;
+    }
+    shell_free(shell, data);
+
+    const char *hint = "Press any key to return...";
+    UINTN hint_w = font_text_width(hint, 2);
+    UINTN hint_x = (shell->gfx->width > hint_w) ? (shell->gfx->width - hint_w) / 2 : 8;
+    UINTN hint_y = shell->gfx->height - 48;
+    font_draw_text(shell->gfx, hint_x, hint_y, hint, 0xF0F0F0, 0x000000, 2, TRUE);
+
+    if (shell->st != NULL && shell->st->BootServices != NULL && shell->st->ConIn != NULL) {
+        UINTN idx;
+        EFI_EVENT event = shell->st->ConIn->WaitForKey;
+        uefi_call_wrapper(shell->st->BootServices->WaitForEvent, 3, 1, &event, &idx);
+        EFI_INPUT_KEY key;
+        uefi_call_wrapper(shell->st->ConIn->ReadKeyStroke, 2, shell->st->ConIn, &key);
+    }
+
+    shell_clear(shell);
+}
+
+static void shell_cmd_initfs(Shell *shell) {
+    static const char *paths[] = {
+        "\\HATTEROS",
+        "\\HATTEROS\\system",
+        "\\HATTEROS\\system\\config",
+        "\\HATTEROS\\system\\log",
+        "\\HATTEROS\\system\\assets",
+        "\\HATTEROS\\system\\tmp",
+        "\\HATTEROS\\user",
+        "\\HATTEROS\\user\\home",
+        "\\HATTEROS\\user\\docs",
+        "\\HATTEROS\\bin",
+    };
+
+    for (UINTN i = 0; i < (sizeof(paths) / sizeof(paths[0])); i++) {
+        EFI_STATUS st = shell_ensure_dir_tree(shell, paths[i]);
+        if (EFI_ERROR(st)) {
+            shell_print(shell, "initfs failed at ");
+            shell_println(shell, paths[i]);
+            shell_print_error_status(shell, "initfs", st);
+            return;
+        }
+    }
+
+    shell_println(shell, "initfs: /HATTEROS directory tree ready");
 }
 
 static void shell_cmd_theme(Shell *shell, const char *arg) {
@@ -1180,18 +1896,21 @@ static void shell_cmd_theme(Shell *shell, const char *arg) {
 
     if (u_strcmp(raw, "default") == 0) {
         shell_apply_theme(shell, 0xE8E8E8, 0x10161E, TRUE);
+        shell_save_settings(shell);
         shell_println(shell, "theme: default");
         return;
     }
 
     if (u_strcmp(raw, "light") == 0) {
         shell_apply_theme(shell, 0x101820, 0xE7EDF4, TRUE);
+        shell_save_settings(shell);
         shell_println(shell, "theme: light");
         return;
     }
 
     if (u_strcmp(raw, "amber") == 0) {
         shell_apply_theme(shell, 0xFFBF3A, 0x14100A, TRUE);
+        shell_save_settings(shell);
         shell_println(shell, "theme: amber");
         return;
     }
@@ -1200,11 +1919,13 @@ static void shell_cmd_theme(Shell *shell, const char *arg) {
         const char *mode = u_trim_left((char *)(raw + 7));
         if (u_strcmp(mode, "full") == 0) {
             shell->prompt_show_path = TRUE;
+            shell_save_settings(shell);
             shell_println(shell, "theme: prompt full");
             return;
         }
         if (u_strcmp(mode, "short") == 0) {
             shell->prompt_show_path = FALSE;
+            shell_save_settings(shell);
             shell_println(shell, "theme: prompt short");
             return;
         }
@@ -1373,22 +2094,12 @@ static void shell_execute(Shell *shell, char *line) {
     }
 
     if (u_strcmp(cmd, "help") == 0) {
-        shell_println(shell, "Commands:");
-        shell_println(shell, "  help        - list commands");
-        shell_println(shell, "  clear       - clear the screen");
-        shell_println(shell, "  echo <text> - print text");
-        shell_println(shell, "  pwd         - print current directory");
-        shell_println(shell, "  cd <path>   - change current directory");
-        shell_println(shell, "  ls [path]   - list files on ESP");
-        shell_println(shell, "  cat <path>  - print file contents");
-        shell_println(shell, "  mkdir <p>   - create directory");
-        shell_println(shell, "  touch <p>   - create empty file");
-        shell_println(shell, "  cp <s> <d>  - copy file");
-        shell_println(shell, "  theme ...   - shell colors/prompt");
-        shell_println(shell, "  time        - read UEFI clock");
-        shell_println(shell, "  memmap      - summarize memory map");
-        shell_println(shell, "  info        - show system info");
-        shell_println(shell, "  reboot      - reboot machine");
+        shell_print_help(shell, "");
+        return;
+    }
+
+    if (u_startswith(cmd, "help ")) {
+        shell_print_help(shell, u_trim_left(cmd + 5));
         return;
     }
 
@@ -1495,6 +2206,71 @@ static void shell_execute(Shell *shell, char *line) {
 
     if (u_strcmp(cmd, "cp") == 0) {
         shell_cmd_cp(shell, "", "");
+        return;
+    }
+
+    if (u_startswith(cmd, "rm ")) {
+        shell_cmd_rm(shell, u_trim_left(cmd + 3));
+        return;
+    }
+
+    if (u_strcmp(cmd, "rm") == 0) {
+        shell_cmd_rm(shell, "");
+        return;
+    }
+
+    if (u_startswith(cmd, "mv ")) {
+        char *args = u_trim_left(cmd + 3);
+        char *src = args;
+        while (*args != '\0' && *args != ' ' && *args != '\t') {
+            args++;
+        }
+        if (*args == '\0') {
+            shell_cmd_mv(shell, "", "");
+            return;
+        }
+        *args++ = '\0';
+        char *dst = u_trim_left(args);
+        if (*dst == '\0') {
+            shell_cmd_mv(shell, "", "");
+            return;
+        }
+        shell_cmd_mv(shell, src, dst);
+        return;
+    }
+
+    if (u_strcmp(cmd, "mv") == 0) {
+        shell_cmd_mv(shell, "", "");
+        return;
+    }
+
+    if (u_startswith(cmd, "hexdump ")) {
+        shell_cmd_hexdump(shell, u_trim_left(cmd + 8));
+        return;
+    }
+
+    if (u_strcmp(cmd, "hexdump") == 0) {
+        shell_cmd_hexdump(shell, "");
+        return;
+    }
+
+    if (u_startswith(cmd, "viewbmp ")) {
+        shell_cmd_viewbmp(shell, u_trim_left(cmd + 8));
+        return;
+    }
+
+    if (u_strcmp(cmd, "viewbmp") == 0) {
+        shell_cmd_viewbmp(shell, "");
+        return;
+    }
+
+    if (u_strcmp(cmd, "history") == 0) {
+        shell_cmd_history(shell);
+        return;
+    }
+
+    if (u_strcmp(cmd, "initfs") == 0) {
+        shell_cmd_initfs(shell);
         return;
     }
 

@@ -235,9 +235,18 @@ static BOOLEAN draw_bmp_centered(GfxContext *gfx, const UINT8 *bmp, UINTN bmp_si
 }
 
 // Try to draw a BMP splash from ESP. Returns FALSE if file is missing or invalid.
-static BOOLEAN draw_external_splash(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st, GfxContext *gfx) {
+// If diagnostic_out is set, it receives a short fallback reason for on-screen debug text.
+static BOOLEAN draw_external_splash(
+    EFI_HANDLE image_handle,
+    EFI_SYSTEM_TABLE *st,
+    GfxContext *gfx,
+    const char **diagnostic_out
+) {
     if (st == NULL || st->BootServices == NULL || gfx == NULL) {
         return FALSE;
+    }
+    if (diagnostic_out != NULL) {
+        *diagnostic_out = NULL;
     }
 
     // Accept common locations/case variants so users can drop assets in esp_files/
@@ -254,6 +263,9 @@ static BOOLEAN draw_external_splash(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *s
         UINTN bmp_size = 0;
         EFI_STATUS status = read_file_from_esp(image_handle, st, candidates[i], &bmp_data, &bmp_size);
         if (EFI_ERROR(status) || bmp_data == NULL) {
+            if (status != EFI_NOT_FOUND && diagnostic_out != NULL) {
+                *diagnostic_out = "splash read error (using built-in splash)";
+            }
             continue;
         }
 
@@ -261,6 +273,9 @@ static BOOLEAN draw_external_splash(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *s
         uefi_call_wrapper(st->BootServices->FreePool, 1, bmp_data);
         if (ok) {
             return TRUE;
+        }
+        if (diagnostic_out != NULL) {
+            *diagnostic_out = "splash format unsupported (need 24/32-bit BMP)";
         }
     }
 
@@ -295,8 +310,9 @@ static void draw_hat_icon(GfxContext *gfx, UINTN center_x, UINTN center_y, UINTN
 // Otherwise, fall back to the built-in procedural HatterOS splash.
 static void draw_splash(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st, GfxContext *gfx) {
     gfx_draw_gradient(gfx, 0x0E1B2C, 0x253C59);
+    const char *splash_diag = NULL;
 
-    if (!draw_external_splash(image_handle, st, gfx)) {
+    if (!draw_external_splash(image_handle, st, gfx, &splash_diag)) {
         const char *title = "HatterOS";
         UINTN title_scale = 8;
         UINTN title_w = font_text_width(title, title_scale);
@@ -305,6 +321,10 @@ static void draw_splash(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st, GfxContex
 
         draw_hat_icon(gfx, gfx->width / 2, gfx->height / 2 - 40, 1);
         font_draw_text(gfx, title_x, title_y, title, 0xF3F7FF, 0, title_scale, TRUE);
+    }
+
+    if (splash_diag != NULL) {
+        font_draw_text(gfx, 12, 10, splash_diag, 0xFFD79A, 0, 1, TRUE);
     }
 
     const char *hint = "Press any key to continue...";

@@ -29,6 +29,8 @@ Install packages (Debian/Ubuntu names):
 ```bash
 sudo apt update
 sudo apt install -y build-essential gnu-efi qemu-system-x86 qemu-utils ovmf dosfstools mtools
+# Optional (auto-convert splash.jpg/png to BMP in run_qemu.sh):
+sudo apt install -y imagemagick
 ```
 
 ### macOS
@@ -60,8 +62,10 @@ Script behavior:
 2. Creates `build/hatteros_esp.img` (FAT32).
 3. Copies EFI app to `/EFI/BOOT/BOOTX64.EFI` inside image.
 4. Copies optional extra files from `esp_files/` into the ESP image root.
-5. Locates OVMF firmware from common paths.
-6. Boots QEMU with `-serial stdio` enabled.
+5. Pre-seeds default `/HATTEROS` directories.
+6. Auto-converts `splash.jpg/png` to `EFI/BOOT/SPLASH.BMP` when no BMP is provided (if `magick`/`convert` is installed).
+7. Locates OVMF firmware from common paths.
+8. Boots QEMU with `-serial stdio` enabled.
 
 ### Add Files For `ls` / `cat`
 
@@ -89,6 +93,16 @@ Optional splash asset:
 - Place a bitmap at `esp_files/EFI/BOOT/SPLASH.BMP` (or `esp_files/splash.bmp`).
 - Supported format: uncompressed BMP, 24-bit or 32-bit.
 - If missing/invalid, HatterOS uses the built-in procedural splash.
+- Optional convenience: place `splash.png`/`splash.jpg`; `run_qemu.sh` will auto-convert to BMP when ImageMagick is available.
+
+Default stage-0 filesystem tree (pre-seeded):
+- `/HATTEROS/system/config`
+- `/HATTEROS/system/log`
+- `/HATTEROS/system/assets`
+- `/HATTEROS/system/tmp`
+- `/HATTEROS/user/home`
+- `/HATTEROS/user/docs`
+- `/HATTEROS/bin`
 
 After booting into the shell, quick smoke-test commands:
 - `help`
@@ -98,6 +112,11 @@ After booting into the shell, quick smoke-test commands:
 - `cat /EFI/BOOT/STARTUP.NSH` (if present)
 - `mkdir demo && touch demo/a.txt` (run as separate commands)
 - `cp demo/a.txt demo/b.txt`
+- `ls -l /`
+- `history`
+- `hexdump /EFI/BOOT/STARTUP.NSH`
+- `viewbmp /EFI/BOOT/SPLASH.BMP` (if present)
+- `initfs`
 - `theme amber`
 - `theme prompt short`
 - `time`
@@ -139,6 +158,8 @@ Inside another terminal while QEMU is running, you can use QEMU monitor commands
   - Install `ovmf` package and verify paths under `/usr/share/OVMF`.
 - `Missing mtools` or `mkfs.fat`:
   - Install `mtools` and `dosfstools`.
+- `Auto-convert splash.jpg/png skipped`:
+  - Install ImageMagick (`magick` or `convert`) if you want host-side conversion to BMP.
 
 ## Alternate Build Path Note
 

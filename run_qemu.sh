@@ -37,6 +37,82 @@ require_cmd() {
   fi
 }
 
+seed_default_hatteros_tree() {
+  local dirs=(
+    "/HATTEROS"
+    "/HATTEROS/system"
+    "/HATTEROS/system/config"
+    "/HATTEROS/system/log"
+    "/HATTEROS/system/assets"
+    "/HATTEROS/system/tmp"
+    "/HATTEROS/user"
+    "/HATTEROS/user/home"
+    "/HATTEROS/user/docs"
+    "/HATTEROS/bin"
+  )
+
+  local dir
+  for dir in "${dirs[@]}"; do
+    mmd -i "$ESP_IMG" "::$dir" </dev/null >/dev/null 2>&1 || true
+  done
+}
+
+prepare_auto_splash() {
+  # If a BMP already exists in common locations, keep it.
+  local bmp_candidates=(
+    "$ESP_FILES_DIR/EFI/BOOT/SPLASH.BMP"
+    "$ESP_FILES_DIR/EFI/BOOT/splash.bmp"
+    "$ESP_FILES_DIR/SPLASH.BMP"
+    "$ESP_FILES_DIR/splash.bmp"
+  )
+  local f
+  for f in "${bmp_candidates[@]}"; do
+    if [[ -f "$f" ]]; then
+      return
+    fi
+  done
+
+  # Otherwise accept png/jpg and convert host-side to BOOT splash BMP.
+  local src_candidates=(
+    "$ESP_FILES_DIR/EFI/BOOT/splash.png"
+    "$ESP_FILES_DIR/EFI/BOOT/SPLASH.PNG"
+    "$ESP_FILES_DIR/EFI/BOOT/splash.jpg"
+    "$ESP_FILES_DIR/EFI/BOOT/SPLASH.JPG"
+    "$ESP_FILES_DIR/EFI/BOOT/splash.jpeg"
+    "$ESP_FILES_DIR/EFI/BOOT/SPLASH.JPEG"
+    "$ESP_FILES_DIR/splash.png"
+    "$ESP_FILES_DIR/SPLASH.PNG"
+    "$ESP_FILES_DIR/splash.jpg"
+    "$ESP_FILES_DIR/SPLASH.JPG"
+    "$ESP_FILES_DIR/splash.jpeg"
+    "$ESP_FILES_DIR/SPLASH.JPEG"
+  )
+
+  local src=""
+  for f in "${src_candidates[@]}"; do
+    if [[ -f "$f" ]]; then
+      src="$f"
+      break
+    fi
+  done
+  if [[ -z "$src" ]]; then
+    return
+  fi
+
+  local out="$BUILD_DIR/auto_splash.bmp"
+  if command -v magick >/dev/null 2>&1; then
+    magick "$src" -type TrueColor -alpha off BMP3:"$out"
+  elif command -v convert >/dev/null 2>&1; then
+    convert "$src" -type TrueColor -alpha off BMP3:"$out"
+  else
+    echo "Found splash source ($src) but no ImageMagick tool (magick/convert). Skipping auto-convert." >&2
+    return
+  fi
+
+  echo "Auto-converted splash asset: ${src#$ROOT_DIR/} -> EFI/BOOT/SPLASH.BMP"
+  mcopy -i "$ESP_IMG" -D o "$out" ::/EFI/BOOT/SPLASH.BMP >/dev/null
+}
+
 copy_extra_esp_files() {
   if [[ ! -d "$ESP_FILES_DIR" ]]; then
     return
@@ -136,6 +212,8 @@ main() {
   mmd -i "$ESP_IMG" ::/EFI ::/EFI/BOOT >/dev/null
   mcopy -i "$ESP_IMG" "$EFI_BIN" ::/EFI/BOOT/BOOTX64.EFI >/dev/null
   copy_extra_esp_files
+  seed_default_hatteros_tree
+  prepare_auto_splash
 
   cp "$ovmf_vars_src" "$OVMF_VARS_WORK"
 
