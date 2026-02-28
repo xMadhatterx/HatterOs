@@ -8,41 +8,22 @@ ESP_IMG="$BUILD_DIR/hatteros_esp.img"
 OVMF_VARS_WORK="$BUILD_DIR/OVMF_VARS.fd"
 
 find_ovmf_pair() {
-  local code_candidates=(
-    "/usr/share/OVMF/OVMF_CODE.fd"
-    "/usr/share/OVMF/OVMF_CODE_4M.fd"
-    "/usr/share/edk2/x64/OVMF_CODE.fd"
-    "/usr/share/edk2-ovmf/x64/OVMF_CODE.fd"
+  local pairs=(
+    "/usr/share/OVMF/OVMF_CODE.fd|/usr/share/OVMF/OVMF_VARS.fd"
+    "/usr/share/OVMF/OVMF_CODE_4M.fd|/usr/share/OVMF/OVMF_VARS_4M.fd"
+    "/usr/share/edk2/x64/OVMF_CODE.fd|/usr/share/edk2/x64/OVMF_VARS.fd"
+    "/usr/share/edk2-ovmf/x64/OVMF_CODE.fd|/usr/share/edk2-ovmf/x64/OVMF_VARS.fd"
   )
 
-  local vars_candidates=(
-    "/usr/share/OVMF/OVMF_VARS.fd"
-    "/usr/share/OVMF/OVMF_VARS_4M.fd"
-    "/usr/share/edk2/x64/OVMF_VARS.fd"
-    "/usr/share/edk2-ovmf/x64/OVMF_VARS.fd"
-  )
-
-  local code_file=""
-  local vars_file=""
-
-  for p in "${code_candidates[@]}"; do
-    if [[ -f "$p" ]]; then
-      code_file="$p"
-      break
+  local pair code vars
+  for pair in "${pairs[@]}"; do
+    code="${pair%%|*}"
+    vars="${pair##*|}"
+    if [[ -f "$code" && -f "$vars" ]]; then
+      echo "$code|$vars"
+      return 0
     fi
   done
-
-  for p in "${vars_candidates[@]}"; do
-    if [[ -f "$p" ]]; then
-      vars_file="$p"
-      break
-    fi
-  done
-
-  if [[ -n "$code_file" && -n "$vars_file" ]]; then
-    echo "$code_file|$vars_file"
-    return 0
-  fi
 
   return 1
 }
