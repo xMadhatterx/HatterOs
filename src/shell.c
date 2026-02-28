@@ -1,6 +1,7 @@
 #include "shell.h"
 #include "font.h"
 #include "util.h"
+#include <efilib.h>
 
 #define INPUT_MAX 256
 
@@ -131,13 +132,13 @@ static EFI_STATUS shell_read_line(Shell *shell, char *line, UINTN max_len) {
     while (1) {
         UINTN idx;
         EFI_EVENT event = shell->st->ConIn->WaitForKey;
-        EFI_STATUS status = shell->st->BootServices->WaitForEvent(1, &event, &idx);
+        EFI_STATUS status = uefi_call_wrapper(shell->st->BootServices->WaitForEvent, 3, 1, &event, &idx);
         if (EFI_ERROR(status)) {
             return status;
         }
 
         EFI_INPUT_KEY key;
-        status = shell->st->ConIn->ReadKeyStroke(shell->st->ConIn, &key);
+        status = uefi_call_wrapper(shell->st->ConIn->ReadKeyStroke, 2, shell->st->ConIn, &key);
         if (EFI_ERROR(status)) {
             continue;
         }
@@ -220,7 +221,7 @@ static void shell_execute(Shell *shell, char *line) {
 
     if (u_strcmp(cmd, "reboot") == 0) {
         shell_println(shell, "Rebooting...");
-        shell->st->RuntimeServices->ResetSystem(EfiResetWarm, EFI_SUCCESS, 0, NULL);
+        uefi_call_wrapper(shell->st->RuntimeServices->ResetSystem, 4, EfiResetWarm, EFI_SUCCESS, 0, NULL);
         return;
     }
 

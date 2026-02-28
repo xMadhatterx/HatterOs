@@ -1,4 +1,5 @@
 #include <efi.h>
+#include <efilib.h>
 
 #include "gfx.h"
 #include "font.h"
@@ -7,7 +8,7 @@
 
 static void uefi_text(EFI_SYSTEM_TABLE *st, CHAR16 *msg) {
     if (st && st->ConOut) {
-        st->ConOut->OutputString(st->ConOut, msg);
+        uefi_call_wrapper(st->ConOut->OutputString, 2, st->ConOut, msg);
     }
 }
 
@@ -61,24 +62,32 @@ static void wait_for_key_or_timeout(EFI_SYSTEM_TABLE *st, UINTN timeout_ms) {
     }
 
     EFI_EVENT timer_event;
-    EFI_STATUS status = st->BootServices->CreateEvent(EVT_TIMER, TPL_CALLBACK, NULL, NULL, &timer_event);
+    EFI_STATUS status = uefi_call_wrapper(
+        st->BootServices->CreateEvent,
+        5,
+        EVT_TIMER,
+        TPL_CALLBACK,
+        NULL,
+        NULL,
+        &timer_event
+    );
     if (EFI_ERROR(status)) {
         return;
     }
 
     UINT64 ticks_100ns = (UINT64)timeout_ms * 10000ULL;
-    st->BootServices->SetTimer(timer_event, TimerRelative, ticks_100ns);
+    uefi_call_wrapper(st->BootServices->SetTimer, 3, timer_event, TimerRelative, ticks_100ns);
 
     EFI_EVENT events[2] = { st->ConIn->WaitForKey, timer_event };
     UINTN index = 0;
-    st->BootServices->WaitForEvent(2, events, &index);
+    uefi_call_wrapper(st->BootServices->WaitForEvent, 3, 2, events, &index);
 
     if (index == 0) {
         EFI_INPUT_KEY key;
-        st->ConIn->ReadKeyStroke(st->ConIn, &key);
+        uefi_call_wrapper(st->ConIn->ReadKeyStroke, 2, st->ConIn, &key);
     }
 
-    st->BootServices->CloseEvent(timer_event);
+    uefi_call_wrapper(st->BootServices->CloseEvent, 1, timer_event);
 }
 
 EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table) {
@@ -94,7 +103,7 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table) {
     serial_writeln("[hatteros] Booting UEFI app");
 
     if (system_table->ConIn != NULL && system_table->ConIn->Reset != NULL) {
-        system_table->ConIn->Reset(system_table->ConIn, FALSE);
+        uefi_call_wrapper(system_table->ConIn->Reset, 2, system_table->ConIn, FALSE);
     }
 
     GfxContext gfx;

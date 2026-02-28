@@ -35,7 +35,7 @@ EFI_LDS := $(firstword $(wildcard \
 
 LIB_DIR := $(dir $(CRT0))
 
-CFLAGS := -std=c11 -ffreestanding -fno-stack-protector -fpic -fshort-wchar -mno-red-zone -Wall -Wextra -I$(EFI_INC) -I$(EFI_ARCH_INC) -Isrc
+CFLAGS := -std=c11 -ffreestanding -fno-stack-protector -fpic -fshort-wchar -mno-red-zone -maccumulate-outgoing-args -DEFI_FUNCTION_WRAPPER -Wall -Wextra -I$(EFI_INC) -I$(EFI_ARCH_INC) -Isrc
 LDFLAGS := -nostdlib -znocombreloc -T $(EFI_LDS) -shared -Bsymbolic -L$(LIB_DIR) -L/usr/lib -L/usr/lib64 -L/usr/lib/x86_64-linux-gnu
 OBJCOPY_EFI_FLAGS := -j .text -j .sdata -j .data -j .dynamic -j .dynsym -j .rel -j .rela -j .rel.* -j .rela.* -j .reloc --target=efi-app-x86_64
 

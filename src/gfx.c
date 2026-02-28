@@ -1,4 +1,5 @@
 #include "gfx.h"
+#include <efilib.h>
 
 static UINTN abs_diff(UINTN a, UINTN b) {
     return (a > b) ? (a - b) : (b - a);
@@ -22,13 +23,21 @@ EFI_STATUS gfx_init(EFI_SYSTEM_TABLE *st, GfxContext *ctx, UINTN target_w, UINTN
     EFI_HANDLE *handles = NULL;
     UINTN handle_count = 0;
 
-    status = st->BootServices->LocateHandleBuffer(ByProtocol, &gop_guid, NULL, &handle_count, &handles);
+    status = uefi_call_wrapper(
+        st->BootServices->LocateHandleBuffer,
+        5,
+        ByProtocol,
+        &gop_guid,
+        NULL,
+        &handle_count,
+        &handles
+    );
     if (EFI_ERROR(status) || handle_count == 0) {
         return status;
     }
 
-    status = st->BootServices->HandleProtocol(handles[0], &gop_guid, (void **)&ctx->gop);
-    st->BootServices->FreePool(handles);
+    status = uefi_call_wrapper(st->BootServices->HandleProtocol, 3, handles[0], &gop_guid, (void **)&ctx->gop);
+    uefi_call_wrapper(st->BootServices->FreePool, 1, handles);
     if (EFI_ERROR(status)) {
         return status;
     }
@@ -39,14 +48,14 @@ EFI_STATUS gfx_init(EFI_SYSTEM_TABLE *st, GfxContext *ctx, UINTN target_w, UINTN
     for (UINT32 mode = 0; mode < ctx->gop->Mode->MaxMode; mode++) {
         EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
         UINTN info_size = 0;
-        status = ctx->gop->QueryMode(ctx->gop, mode, &info_size, &info);
+        status = uefi_call_wrapper(ctx->gop->QueryMode, 4, ctx->gop, mode, &info_size, &info);
         if (EFI_ERROR(status)) {
             continue;
         }
 
         if (info->PixelFormat != PixelBlueGreenRedReserved8BitPerColor &&
             info->PixelFormat != PixelRedGreenBlueReserved8BitPerColor) {
-            st->BootServices->FreePool(info);
+            uefi_call_wrapper(st->BootServices->FreePool, 1, info);
             continue;
         }
 
@@ -58,11 +67,11 @@ EFI_STATUS gfx_init(EFI_SYSTEM_TABLE *st, GfxContext *ctx, UINTN target_w, UINTN
             best_mode = mode;
         }
 
-        st->BootServices->FreePool(info);
+        uefi_call_wrapper(st->BootServices->FreePool, 1, info);
     }
 
     if (best_mode != ctx->gop->Mode->Mode) {
-        status = ctx->gop->SetMode(ctx->gop, best_mode);
+        status = uefi_call_wrapper(ctx->gop->SetMode, 2, ctx->gop, best_mode);
         if (EFI_ERROR(status)) {
             // Keep running in current mode if preferred mode switch fails.
             status = EFI_SUCCESS;
