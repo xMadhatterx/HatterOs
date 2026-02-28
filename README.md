@@ -62,6 +62,12 @@ Script behavior:
 4. Locates OVMF firmware from common paths.
 5. Boots QEMU with `-serial stdio` enabled.
 
+After booting into the shell, quick smoke-test commands:
+- `help`
+- `ls`
+- `cat /EFI/BOOT/STARTUP.NSH` (if present)
+- `info`
+
 ### Minimal Diagnostic Boot
 
 If the full app crashes with `#GP`, boot a minimal EFI app to isolate toolchain/firmware issues:

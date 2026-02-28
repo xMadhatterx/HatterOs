@@ -111,7 +111,7 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table) {
     wait_for_key_or_timeout(system_table, 2000);
 
     Shell shell;
-    shell_init(&shell, system_table, &gfx);
+    shell_init(&shell, image_handle, system_table, &gfx);
     shell_run(&shell);
 
     return EFI_SUCCESS;

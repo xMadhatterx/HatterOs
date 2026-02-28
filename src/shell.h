@@ -5,6 +5,7 @@
 #include "gfx.h"
 
 typedef struct {
+    EFI_HANDLE image_handle;
     EFI_SYSTEM_TABLE *st;
     GfxContext *gfx;
     UINTN cursor_col;
@@ -17,7 +18,7 @@ typedef struct {
     UINT32 bg_color;
 } Shell;
 
-void shell_init(Shell *shell, EFI_SYSTEM_TABLE *st, GfxContext *gfx);
+void shell_init(Shell *shell, EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st, GfxContext *gfx);
 void shell_run(Shell *shell);
 void shell_print(Shell *shell, const char *text);
 void shell_println(Shell *shell, const char *text);

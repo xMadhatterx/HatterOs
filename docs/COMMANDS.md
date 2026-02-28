@@ -18,6 +18,22 @@ Examples:
 - `echo hello`
 - `echo HatterOS stage0`
 
+## `ls [path]`
+
+Lists files/directories on the EFI System Partition (ESP).
+
+Examples:
+- `ls`
+- `ls /EFI/BOOT`
+
+## `cat <path>`
+
+Prints file contents from the ESP.
+
+Examples:
+- `cat /EFI/BOOT/startup.nsh`
+- `cat /EFI/BOOT/readme.txt`
+
 ## `info`
 
 Shows system/runtime information:

@@ -4,6 +4,8 @@
 #include <efilib.h>
 
 #define INPUT_MAX 256
+#define PATH16_MAX 260
+#define FILE_IO_CHUNK 512
 
 static void shell_newline(Shell *shell);
 static void shell_putc(Shell *shell, char c);
@@ -11,8 +13,16 @@ static void shell_prompt(Shell *shell);
 static void shell_execute(Shell *shell, char *line);
 static EFI_STATUS shell_read_line(Shell *shell, char *line, UINTN max_len);
 static void shell_scroll(Shell *shell);
+static EFI_STATUS shell_open_root(Shell *shell, EFI_FILE_PROTOCOL **root);
+static BOOLEAN shell_ascii_path_to_char16(const char *path, CHAR16 *out, UINTN out_len);
+static void shell_print_file_name(Shell *shell, const CHAR16 *name);
+static void shell_cmd_ls(Shell *shell, const char *arg);
+static void shell_cmd_cat(Shell *shell, const char *arg);
+static void *shell_alloc(Shell *shell, UINTN size);
+static void shell_free(Shell *shell, void *ptr);
 
-void shell_init(Shell *shell, EFI_SYSTEM_TABLE *st, GfxContext *gfx) {
+void shell_init(Shell *shell, EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st, GfxContext *gfx) {
+    shell->image_handle = image_handle;
     shell->st = st;
     shell->gfx = gfx;
     shell->margin_x = 8;
@@ -167,6 +177,271 @@ static EFI_STATUS shell_read_line(Shell *shell, char *line, UINTN max_len) {
     }
 }
 
+static void *shell_alloc(Shell *shell, UINTN size) {
+    if (shell == NULL || shell->st == NULL || shell->st->BootServices == NULL) {
+        return NULL;
+    }
+    void *ptr = NULL;
+    EFI_STATUS status = uefi_call_wrapper(shell->st->BootServices->AllocatePool, 3, EfiLoaderData, size, &ptr);
+    if (EFI_ERROR(status)) {
+        return NULL;
+    }
+    return ptr;
+}
+
+static void shell_free(Shell *shell, void *ptr) {
+    if (ptr == NULL || shell == NULL || shell->st == NULL || shell->st->BootServices == NULL) {
+        return;
+    }
+    uefi_call_wrapper(shell->st->BootServices->FreePool, 1, ptr);
+}
+
+static EFI_STATUS shell_open_root(Shell *shell, EFI_FILE_PROTOCOL **root) {
+    if (root == NULL) {
+        return EFI_INVALID_PARAMETER;
+    }
+
+    *root = NULL;
+
+    EFI_GUID loaded_image_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
+    EFI_GUID sfs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    EFI_LOADED_IMAGE *loaded = NULL;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = NULL;
+
+    EFI_STATUS status = uefi_call_wrapper(
+        shell->st->BootServices->HandleProtocol,
+        3,
+        shell->image_handle,
+        &loaded_image_guid,
+        (void **)&loaded
+    );
+    if (EFI_ERROR(status) || loaded == NULL) {
+        return EFI_NOT_FOUND;
+    }
+
+    status = uefi_call_wrapper(
+        shell->st->BootServices->HandleProtocol,
+        3,
+        loaded->DeviceHandle,
+        &sfs_guid,
+        (void **)&fs
+    );
+    if (EFI_ERROR(status) || fs == NULL) {
+        return EFI_NOT_FOUND;
+    }
+
+    return uefi_call_wrapper(fs->OpenVolume, 2, fs, root);
+}
+
+static BOOLEAN shell_ascii_path_to_char16(const char *path, CHAR16 *out, UINTN out_len) {
+    if (out == NULL || out_len < 2) {
+        return FALSE;
+    }
+
+    const char *p = path;
+    if (p == NULL) {
+        p = "";
+    }
+    p = u_trim_left((char *)p);
+
+    if (*p == '\0' || (*p == '.' && p[1] == '\0')) {
+        out[0] = '\\';
+        out[1] = '\0';
+        return TRUE;
+    }
+
+    UINTN i = 0;
+    if (*p != '\\' && *p != '/') {
+        out[i++] = '\\';
+    }
+
+    while (*p != '\0') {
+        if (i + 1 >= out_len) {
+            return FALSE;
+        }
+        char c = *p++;
+        if (c == '/') {
+            c = '\\';
+        }
+        out[i++] = (CHAR16)(UINT8)c;
+    }
+
+    out[i] = '\0';
+    return TRUE;
+}
+
+static void shell_print_file_name(Shell *shell, const CHAR16 *name) {
+    char line[256];
+    UINTN i = 0;
+    while (name != NULL && name[i] != 0 && i + 1 < sizeof(line)) {
+        CHAR16 wc = name[i];
+        line[i] = (wc >= 32 && wc <= 126) ? (char)wc : '?';
+        i++;
+    }
+    line[i] = '\0';
+    shell_println(shell, line);
+}
+
+static void shell_cmd_ls(Shell *shell, const char *arg) {
+    EFI_FILE_PROTOCOL *root = NULL;
+    EFI_FILE_PROTOCOL *dir = NULL;
+    CHAR16 path16[PATH16_MAX];
+
+    if (!shell_ascii_path_to_char16(arg, path16, PATH16_MAX)) {
+        shell_println(shell, "ls: path too long");
+        return;
+    }
+
+    EFI_STATUS status = shell_open_root(shell, &root);
+    if (EFI_ERROR(status) || root == NULL) {
+        shell_println(shell, "ls: failed to open filesystem");
+        return;
+    }
+
+    status = uefi_call_wrapper(root->Open, 5, root, &dir, path16, EFI_FILE_MODE_READ, 0);
+    uefi_call_wrapper(root->Close, 1, root);
+    if (EFI_ERROR(status) || dir == NULL) {
+        shell_println(shell, "ls: cannot open path");
+        return;
+    }
+
+    EFI_GUID file_info_guid = EFI_FILE_INFO_ID;
+    UINTN meta_size = 0;
+    status = uefi_call_wrapper(dir->GetInfo, 4, dir, &file_info_guid, &meta_size, NULL);
+    if (status == EFI_BUFFER_TOO_SMALL && meta_size > 0) {
+        EFI_FILE_INFO *meta = (EFI_FILE_INFO *)shell_alloc(shell, meta_size);
+        if (meta != NULL) {
+            status = uefi_call_wrapper(dir->GetInfo, 4, dir, &file_info_guid, &meta_size, meta);
+            if (!EFI_ERROR(status) && (meta->Attribute & EFI_FILE_DIRECTORY) == 0) {
+                shell_print("      ");
+                shell_print_file_name(shell, meta->FileName);
+                shell_free(shell, meta);
+                uefi_call_wrapper(dir->Close, 1, dir);
+                return;
+            }
+            shell_free(shell, meta);
+        }
+    }
+
+    UINTN info_buf_size = SIZE_OF_EFI_FILE_INFO + 512;
+    EFI_FILE_INFO *info = (EFI_FILE_INFO *)shell_alloc(shell, info_buf_size);
+    if (info == NULL) {
+        shell_println(shell, "ls: out of memory");
+        uefi_call_wrapper(dir->Close, 1, dir);
+        return;
+    }
+
+    uefi_call_wrapper(dir->SetPosition, 2, dir, 0);
+    while (1) {
+        UINTN read_size = info_buf_size;
+        status = uefi_call_wrapper(dir->Read, 3, dir, &read_size, info);
+        if (status == EFI_BUFFER_TOO_SMALL && read_size > info_buf_size) {
+            shell_free(shell, info);
+            info_buf_size = read_size;
+            info = (EFI_FILE_INFO *)shell_alloc(shell, info_buf_size);
+            if (info == NULL) {
+                shell_println(shell, "ls: out of memory");
+                break;
+            }
+            continue;
+        }
+        if (EFI_ERROR(status) || read_size == 0) {
+            break;
+        }
+
+        if (info->FileName[0] == 0) {
+            continue;
+        }
+
+        if ((info->Attribute & EFI_FILE_DIRECTORY) != 0) {
+            shell_print(shell, "[DIR] ");
+        } else {
+            shell_print(shell, "      ");
+        }
+        shell_print_file_name(shell, info->FileName);
+    }
+
+    shell_free(shell, info);
+    uefi_call_wrapper(dir->Close, 1, dir);
+}
+
+static void shell_cmd_cat(Shell *shell, const char *arg) {
+    if (arg == NULL || *arg == '\0') {
+        shell_println(shell, "cat: usage: cat <path>");
+        return;
+    }
+
+    EFI_FILE_PROTOCOL *root = NULL;
+    EFI_FILE_PROTOCOL *file = NULL;
+    CHAR16 path16[PATH16_MAX];
+
+    if (!shell_ascii_path_to_char16(arg, path16, PATH16_MAX)) {
+        shell_println(shell, "cat: path too long");
+        return;
+    }
+
+    EFI_STATUS status = shell_open_root(shell, &root);
+    if (EFI_ERROR(status) || root == NULL) {
+        shell_println(shell, "cat: failed to open filesystem");
+        return;
+    }
+
+    status = uefi_call_wrapper(root->Open, 5, root, &file, path16, EFI_FILE_MODE_READ, 0);
+    uefi_call_wrapper(root->Close, 1, root);
+    if (EFI_ERROR(status) || file == NULL) {
+        shell_println(shell, "cat: cannot open file");
+        return;
+    }
+
+    EFI_GUID file_info_guid = EFI_FILE_INFO_ID;
+    UINTN info_size = 0;
+    status = uefi_call_wrapper(file->GetInfo, 4, file, &file_info_guid, &info_size, NULL);
+    if (status == EFI_BUFFER_TOO_SMALL && info_size > 0) {
+        EFI_FILE_INFO *info = (EFI_FILE_INFO *)shell_alloc(shell, info_size);
+        if (info != NULL) {
+            status = uefi_call_wrapper(file->GetInfo, 4, file, &file_info_guid, &info_size, info);
+            if (!EFI_ERROR(status) && (info->Attribute & EFI_FILE_DIRECTORY) != 0) {
+                shell_println(shell, "cat: path is a directory");
+                shell_free(shell, info);
+                uefi_call_wrapper(file->Close, 1, file);
+                return;
+            }
+            shell_free(shell, info);
+        }
+    }
+
+    UINT8 *buf = (UINT8 *)shell_alloc(shell, FILE_IO_CHUNK);
+    if (buf == NULL) {
+        shell_println(shell, "cat: out of memory");
+        uefi_call_wrapper(file->Close, 1, file);
+        return;
+    }
+
+    while (1) {
+        UINTN read_size = FILE_IO_CHUNK;
+        status = uefi_call_wrapper(file->Read, 3, file, &read_size, buf);
+        if (EFI_ERROR(status) || read_size == 0) {
+            break;
+        }
+
+        for (UINTN i = 0; i < read_size; i++) {
+            char c = (char)buf[i];
+            if (c == '\r') {
+                continue;
+            }
+            if (c == '\n' || c == '\t' || (c >= 32 && c <= 126)) {
+                shell_putc(shell, c);
+            } else {
+                shell_putc(shell, '.');
+            }
+        }
+    }
+
+    shell_putc(shell, '\n');
+    shell_free(shell, buf);
+    uefi_call_wrapper(file->Close, 1, file);
+}
+
 static void print_info(Shell *shell) {
     char w[32], h[32], fb_addr[32], fb_size[32];
     u_u64_to_dec(shell->gfx->width, w, sizeof(w));
@@ -201,6 +476,8 @@ static void shell_execute(Shell *shell, char *line) {
         shell_println(shell, "  help        - list commands");
         shell_println(shell, "  clear       - clear the screen");
         shell_println(shell, "  echo <text> - print text");
+        shell_println(shell, "  ls [path]   - list files on ESP");
+        shell_println(shell, "  cat <path>  - print file contents");
         shell_println(shell, "  info        - show system info");
         shell_println(shell, "  reboot      - reboot machine");
         return;
@@ -229,6 +506,26 @@ static void shell_execute(Shell *shell, char *line) {
 
     if (u_startswith(cmd, "echo ")) {
         shell_println(shell, cmd + 5);
+        return;
+    }
+
+    if (u_strcmp(cmd, "ls") == 0) {
+        shell_cmd_ls(shell, "");
+        return;
+    }
+
+    if (u_startswith(cmd, "ls ")) {
+        shell_cmd_ls(shell, u_trim_left(cmd + 3));
+        return;
+    }
+
+    if (u_startswith(cmd, "cat ")) {
+        shell_cmd_cat(shell, u_trim_left(cmd + 4));
+        return;
+    }
+
+    if (u_strcmp(cmd, "cat") == 0) {
+        shell_cmd_cat(shell, "");
         return;
     }
 

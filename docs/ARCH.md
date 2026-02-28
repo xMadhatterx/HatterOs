@@ -54,10 +54,13 @@ Commands are parsed by prefix/exact comparisons with custom string helpers:
 - `help`
 - `clear`
 - `echo <text>`
+- `ls [path]`
+- `cat <path>`
 - `info`
 - `reboot`
 
 `info` reports runtime GOP details and build/version metadata.
+`ls`/`cat` use `LoadedImage -> DeviceHandle -> SimpleFileSystem` to access files on the same ESP the EFI app was loaded from.
 
 `reboot` delegates to UEFI runtime service `ResetSystem`.
 
