@@ -56,7 +56,8 @@ EFI_STATUS gfx_init(EFI_SYSTEM_TABLE *st, GfxContext *ctx, UINTN target_w, UINTN
     if (best_mode != ctx->gop->Mode->Mode) {
         status = ctx->gop->SetMode(ctx->gop, best_mode);
         if (EFI_ERROR(status)) {
-            return status;
+            // Keep running in current mode if preferred mode switch fails.
+            status = EFI_SUCCESS;
         }
     }
 
