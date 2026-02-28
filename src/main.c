@@ -5,6 +5,12 @@
 #include "shell.h"
 #include "util.h"
 
+static void uefi_text(EFI_SYSTEM_TABLE *st, CHAR16 *msg) {
+    if (st && st->ConOut) {
+        st->ConOut->OutputString(st->ConOut, msg);
+    }
+}
+
 static void draw_hat_icon(GfxContext *gfx, UINTN center_x, UINTN center_y, UINTN scale) {
     UINTN brim_w = 120 * scale;
     UINTN brim_h = 18 * scale;
@@ -71,8 +77,10 @@ static void wait_for_key_or_timeout(EFI_SYSTEM_TABLE *st, UINTN timeout_ms) {
     st->BootServices->CloseEvent(timer_event);
 }
 
-EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table) {
+EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table) {
     (void)image_handle;
+
+    uefi_text(system_table, L"HatterOS: entry\r\n");
 
     serial_init();
     serial_writeln("[hatteros] Booting UEFI app");
@@ -82,8 +90,9 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table) {
     GfxContext gfx;
     EFI_STATUS status = gfx_init(system_table, &gfx, 1024, 768);
     if (EFI_ERROR(status)) {
+        uefi_text(system_table, L"HatterOS: GOP init failed, cannot start framebuffer shell.\r\n");
         serial_writeln("[hatteros] GOP init failed");
-        return status;
+        return EFI_SUCCESS;
     }
 
     serial_writeln("[hatteros] GOP initialized");
