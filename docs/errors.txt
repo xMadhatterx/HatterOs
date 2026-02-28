@@ -44,3 +44,74 @@ IDTR - 000000001F138018 0000000000000FFF,   TR - 0000000000000000
 FXSAVE_STATE - 000000001FE963D0
 !!!! Find image based on IP(0x1E9370F5) (No PDB)  (ImageBase=000000001E936000, EntryPoint=000000001E939A05) !!!!
 
+
++ set -euo pipefail
++++ dirname run_qemu.sh
+++ cd .
+++ pwd
++ ROOT_DIR=/home/dayoldcoffee/Repos/HatterOs
++ BUILD_DIR=/home/dayoldcoffee/Repos/HatterOs/build
++ EFI_BIN=/home/dayoldcoffee/Repos/HatterOs/build/BOOTX64.EFI
++ ESP_IMG=/home/dayoldcoffee/Repos/HatterOs/build/hatteros_esp.img
++ OVMF_VARS_WORK=/home/dayoldcoffee/Repos/HatterOs/build/OVMF_VARS.fd
++ ESP_FILES_DIR=/home/dayoldcoffee/Repos/HatterOs/esp_files
++ MAKE_TARGET=all
++ main
++ [[ '' == \-\-\m\i\n\i\m\a\l ]]
++ mkdir -p /home/dayoldcoffee/Repos/HatterOs/build
++ require_cmd make
++ command -v make
++ require_cmd qemu-system-x86_64
++ command -v qemu-system-x86_64
++ require_cmd qemu-img
++ command -v qemu-img
++ command -v mkfs.fat
++ command -v mcopy
++ command -v mmd
++ local ovmf_code ovmf_vars_src ovmf_pair
++ [[ -n '' ]]
++ [[ -n '' ]]
+++ find_ovmf_pair
+++ pairs=('/usr/share/OVMF/OVMF_CODE.fd|/usr/share/OVMF/OVMF_VARS.fd' '/usr/share/OVMF/OVMF_CODE_4M.fd|/usr/share/OVMF/OVMF_VARS_4M.fd' '/usr/share/edk2/x64/OVMF_CODE.fd|/usr/share/edk2/x64/OVMF_VARS.fd' '/usr/share/edk2-ovmf/x64/OVMF_CODE.fd|/usr/share/edk2-ovmf/x64/OVMF_VARS.fd')
+++ local pairs
+++ local pair code vars
+++ for pair in "${pairs[@]}"
+++ code=/usr/share/OVMF/OVMF_CODE.fd
+++ vars=/usr/share/OVMF/OVMF_VARS.fd
+++ [[ -f /usr/share/OVMF/OVMF_CODE.fd ]]
+++ for pair in "${pairs[@]}"
+++ code=/usr/share/OVMF/OVMF_CODE_4M.fd
+++ vars=/usr/share/OVMF/OVMF_VARS_4M.fd
+++ [[ -f /usr/share/OVMF/OVMF_CODE_4M.fd ]]
+++ [[ -f /usr/share/OVMF/OVMF_VARS_4M.fd ]]
+++ echo '/usr/share/OVMF/OVMF_CODE_4M.fd|/usr/share/OVMF/OVMF_VARS_4M.fd'
+++ return 0
++ ovmf_pair='/usr/share/OVMF/OVMF_CODE_4M.fd|/usr/share/OVMF/OVMF_VARS_4M.fd'
++ ovmf_code=/usr/share/OVMF/OVMF_CODE_4M.fd
++ ovmf_vars_src=/usr/share/OVMF/OVMF_VARS_4M.fd
++ make -C /home/dayoldcoffee/Repos/HatterOs all
+make: Entering directory '/home/dayoldcoffee/Repos/HatterOs'
+make: Leaving directory '/home/dayoldcoffee/Repos/HatterOs'
++ [[ ! -f /home/dayoldcoffee/Repos/HatterOs/build/BOOTX64.EFI ]]
++ rm -f /home/dayoldcoffee/Repos/HatterOs/build/hatteros_esp.img
++ qemu-img create -f raw /home/dayoldcoffee/Repos/HatterOs/build/hatteros_esp.img 64M
++ command -v mkfs.fat
++ mkfs.fat -F 32 /home/dayoldcoffee/Repos/HatterOs/build/hatteros_esp.img
++ mmd -i /home/dayoldcoffee/Repos/HatterOs/build/hatteros_esp.img ::/EFI ::/EFI/BOOT
++ mcopy -i /home/dayoldcoffee/Repos/HatterOs/build/hatteros_esp.img /home/dayoldcoffee/Repos/HatterOs/build/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
++ copy_extra_esp_files
++ [[ ! -d /home/dayoldcoffee/Repos/HatterOs/esp_files ]]
++ local first_entry
+++ find /home/dayoldcoffee/Repos/HatterOs/esp_files -mindepth 1 '!' -name .gitkeep -print -quit
++ first_entry=/home/dayoldcoffee/Repos/HatterOs/esp_files/test_file.txt
++ [[ -z /home/dayoldcoffee/Repos/HatterOs/esp_files/test_file.txt ]]
++ echo 'Copying extra files from esp_files/ into ESP image...'
+Copying extra files from esp_files/ into ESP image...
++ local dir_count=0
++ local file_count=0
++ IFS=
++ read -r -d '' dir
+++ find /home/dayoldcoffee/Repos/HatterOs/esp_files -mindepth 1 -type d -print0
++ local rel=EFI
++ mmd -i /home/dayoldcoffee/Repos/HatterOs/build/hatteros_esp.img ::/EFI
+
