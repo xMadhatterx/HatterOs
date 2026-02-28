@@ -1,6 +1,7 @@
 # HatterOS Shell Commands
 
-Prompt: `HATTEROS/...> ` (for example `HATTEROS/> ` or `HATTEROS/EFI/BOOT> `)
+Prompt defaults to `HATTEROS/...> ` (for example `HATTEROS/> ` or `HATTEROS/EFI/BOOT> `).
+You can switch to `HATTEROS> ` via `theme prompt short`.
 
 Line editor shortcuts:
 - Left/Right arrows move cursor in the current line.
@@ -76,6 +77,29 @@ Copies a file from `<src>` to `<dst>`.
 Examples:
 - `cp notes.txt notes.bak`
 - `cp /docs/a.txt /docs/b.txt`
+
+## `theme [option]`
+
+Updates shell colors or prompt style.
+
+Options:
+- `theme default`
+- `theme light`
+- `theme amber`
+- `theme prompt full`
+- `theme prompt short`
+
+Examples:
+- `theme amber`
+- `theme prompt short`
+
+## `time`
+
+Reads current UTC time from UEFI runtime services.
+
+## `memmap`
+
+Prints a summary of the current UEFI memory map (descriptor count and pages by memory type).
 
 ## `info`
 

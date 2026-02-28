@@ -20,6 +20,7 @@ typedef struct {
     UINTN margin_y;
     UINT32 fg_color;
     UINT32 bg_color;
+    BOOLEAN prompt_show_path;
     char cwd[SHELL_PATH_MAX];
     char history[SHELL_HISTORY_MAX][SHELL_INPUT_MAX];
     UINTN history_count;

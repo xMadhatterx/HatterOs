@@ -21,9 +21,9 @@ Subsystems:
    - width/height
    - pixels-per-scanline
 5. Splash renderer draws:
-   - vertical gradient
-   - procedural top-hat icon from rectangles
-   - centered `HatterOS` title text
+   - vertical gradient base
+   - optional external BMP (`\EFI\BOOT\SPLASH.BMP`, 24/32-bit uncompressed) centered on screen
+   - fallback procedural top-hat icon + centered `HatterOS` title when BMP is missing/invalid
    - continue hint
 
 ## Text Rendering
@@ -61,6 +61,9 @@ Commands are parsed by prefix/exact comparisons with custom string helpers:
 - `mkdir <path>`
 - `touch <path>`
 - `cp <src> <dst>`
+- `theme [option]`
+- `time`
+- `memmap`
 - `info`
 - `reboot`
 
@@ -68,6 +71,9 @@ Commands are parsed by prefix/exact comparisons with custom string helpers:
 `cd`/`pwd` maintain a shell-level current working directory.
 `ls`/`cat` use `LoadedImage -> DeviceHandle -> SimpleFileSystem` to access files on the same ESP the EFI app was loaded from, with absolute or relative paths resolved against the current directory.
 `mkdir`/`touch`/`cp` use the same path resolver and UEFI `EFI_FILE_PROTOCOL` operations for create/read/write.
+`theme` updates shell foreground/background colors and prompt style (full path vs short prompt).
+`time` uses UEFI runtime service `GetTime`.
+`memmap` uses UEFI boot service `GetMemoryMap` and prints a per-memory-type summary.
 
 `reboot` delegates to UEFI runtime service `ResetSystem`.
 

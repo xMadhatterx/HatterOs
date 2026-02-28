@@ -28,6 +28,13 @@ static void shell_cmd_pwd(Shell *shell);
 static void shell_cmd_mkdir(Shell *shell, const char *arg);
 static void shell_cmd_touch(Shell *shell, const char *arg);
 static void shell_cmd_cp(Shell *shell, const char *src_arg, const char *dst_arg);
+static void shell_cmd_theme(Shell *shell, const char *arg);
+static void shell_cmd_time(Shell *shell);
+static void shell_cmd_memmap(Shell *shell);
+static void shell_print_u64(Shell *shell, UINT64 value);
+static void shell_print_padded_u64(Shell *shell, UINT64 value, UINTN width);
+static const char *shell_mem_type_name(UINT32 type);
+static void shell_apply_theme(Shell *shell, UINT32 fg, UINT32 bg, BOOLEAN clear_screen);
 static void shell_history_add(Shell *shell, const char *line);
 static void *shell_alloc(Shell *shell, UINTN size);
 static void shell_free(Shell *shell, void *ptr);
@@ -41,6 +48,7 @@ void shell_init(Shell *shell, EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st, Gfx
     shell->margin_y = 8;
     shell->fg_color = 0xE8E8E8;
     shell->bg_color = 0x10161E;
+    shell->prompt_show_path = TRUE;
 
     UINTN usable_w = (gfx->width > shell->margin_x * 2) ? (gfx->width - shell->margin_x * 2) : gfx->width;
     UINTN usable_h = (gfx->height > shell->margin_y * 2) ? (gfx->height - shell->margin_y * 2) : gfx->height;
@@ -161,15 +169,17 @@ static UINTN shell_build_prompt(Shell *shell, char *prompt, UINTN out_len) {
         i++;
     }
 
-    if (shell->cwd[0] == '\\' && shell->cwd[1] == '\0') {
-        if (i + 1 < out_len) {
-            prompt[i++] = '/';
-        }
-    } else {
-        UINTN j = 0;
-        while (shell->cwd[j] != '\0' && i + 1 < out_len) {
-            prompt[i++] = (shell->cwd[j] == '\\') ? '/' : shell->cwd[j];
-            j++;
+    if (shell->prompt_show_path) {
+        if (shell->cwd[0] == '\\' && shell->cwd[1] == '\0') {
+            if (i + 1 < out_len) {
+                prompt[i++] = '/';
+            }
+        } else {
+            UINTN j = 0;
+            while (shell->cwd[j] != '\0' && i + 1 < out_len) {
+                prompt[i++] = (shell->cwd[j] == '\\') ? '/' : shell->cwd[j];
+                j++;
+            }
         }
     }
 
@@ -391,6 +401,51 @@ static void shell_print_error_status(Shell *shell, const char *prefix, EFI_STATU
     shell_print(shell, " (");
     shell_print(shell, code);
     shell_println(shell, ")");
+}
+
+static void shell_print_u64(Shell *shell, UINT64 value) {
+    char buf[32];
+    u_u64_to_dec(value, buf, sizeof(buf));
+    shell_print(shell, buf);
+}
+
+static void shell_print_padded_u64(Shell *shell, UINT64 value, UINTN width) {
+    char buf[32];
+    u_u64_to_dec(value, buf, sizeof(buf));
+    UINTN len = u_strlen(buf);
+    while (len < width) {
+        shell_putc(shell, '0');
+        len++;
+    }
+    shell_print(shell, buf);
+}
+
+static const char *shell_mem_type_name(UINT32 type) {
+    switch (type) {
+    case EfiReservedMemoryType: return "Reserved";
+    case EfiLoaderCode: return "LoaderCode";
+    case EfiLoaderData: return "LoaderData";
+    case EfiBootServicesCode: return "BS_Code";
+    case EfiBootServicesData: return "BS_Data";
+    case EfiRuntimeServicesCode: return "RT_Code";
+    case EfiRuntimeServicesData: return "RT_Data";
+    case EfiConventionalMemory: return "Conventional";
+    case EfiUnusableMemory: return "Unusable";
+    case EfiACPIReclaimMemory: return "ACPI_Reclaim";
+    case EfiACPIMemoryNVS: return "ACPI_NVS";
+    case EfiMemoryMappedIO: return "MMIO";
+    case EfiMemoryMappedIOPortSpace: return "MMIO_Port";
+    case EfiPalCode: return "PalCode";
+    default: return "Unknown";
+    }
+}
+
+static void shell_apply_theme(Shell *shell, UINT32 fg, UINT32 bg, BOOLEAN clear_screen) {
+    shell->fg_color = fg;
+    shell->bg_color = bg;
+    if (clear_screen) {
+        shell_clear(shell);
+    }
 }
 
 // Open ESP root directory where this EFI app was loaded from.
@@ -1107,6 +1162,185 @@ out:
     }
 }
 
+static void shell_cmd_theme(Shell *shell, const char *arg) {
+    const char *raw = (arg != NULL) ? arg : "";
+    raw = u_trim_left((char *)raw);
+
+    if (*raw == '\0') {
+        shell_println(shell, "theme usage:");
+        shell_println(shell, "  theme default");
+        shell_println(shell, "  theme light");
+        shell_println(shell, "  theme amber");
+        shell_println(shell, "  theme prompt full");
+        shell_println(shell, "  theme prompt short");
+        shell_print(shell, "  current prompt mode: ");
+        shell_println(shell, shell->prompt_show_path ? "full" : "short");
+        return;
+    }
+
+    if (u_strcmp(raw, "default") == 0) {
+        shell_apply_theme(shell, 0xE8E8E8, 0x10161E, TRUE);
+        shell_println(shell, "theme: default");
+        return;
+    }
+
+    if (u_strcmp(raw, "light") == 0) {
+        shell_apply_theme(shell, 0x101820, 0xE7EDF4, TRUE);
+        shell_println(shell, "theme: light");
+        return;
+    }
+
+    if (u_strcmp(raw, "amber") == 0) {
+        shell_apply_theme(shell, 0xFFBF3A, 0x14100A, TRUE);
+        shell_println(shell, "theme: amber");
+        return;
+    }
+
+    if (u_startswith(raw, "prompt ")) {
+        const char *mode = u_trim_left((char *)(raw + 7));
+        if (u_strcmp(mode, "full") == 0) {
+            shell->prompt_show_path = TRUE;
+            shell_println(shell, "theme: prompt full");
+            return;
+        }
+        if (u_strcmp(mode, "short") == 0) {
+            shell->prompt_show_path = FALSE;
+            shell_println(shell, "theme: prompt short");
+            return;
+        }
+        shell_println(shell, "theme: usage: theme prompt <full|short>");
+        return;
+    }
+
+    shell_println(shell, "theme: unknown option");
+}
+
+static void shell_cmd_time(Shell *shell) {
+    if (shell == NULL || shell->st == NULL || shell->st->RuntimeServices == NULL) {
+        shell_println(shell, "time: runtime services unavailable");
+        return;
+    }
+
+    EFI_TIME now;
+    EFI_STATUS status = uefi_call_wrapper(shell->st->RuntimeServices->GetTime, 2, &now, NULL);
+    if (EFI_ERROR(status)) {
+        shell_print_error_status(shell, "time failed", status);
+        return;
+    }
+
+    shell_print(shell, "UTC ");
+    shell_print_u64(shell, now.Year);
+    shell_putc(shell, '-');
+    shell_print_padded_u64(shell, now.Month, 2);
+    shell_putc(shell, '-');
+    shell_print_padded_u64(shell, now.Day, 2);
+    shell_putc(shell, ' ');
+    shell_print_padded_u64(shell, now.Hour, 2);
+    shell_putc(shell, ':');
+    shell_print_padded_u64(shell, now.Minute, 2);
+    shell_putc(shell, ':');
+    shell_print_padded_u64(shell, now.Second, 2);
+    shell_putc(shell, '\n');
+}
+
+static void shell_cmd_memmap(Shell *shell) {
+    if (shell == NULL || shell->st == NULL || shell->st->BootServices == NULL) {
+        shell_println(shell, "memmap: boot services unavailable");
+        return;
+    }
+
+    UINTN map_size = 0;
+    UINTN map_key = 0;
+    UINTN desc_size = 0;
+    UINT32 desc_version = 0;
+    EFI_STATUS status = uefi_call_wrapper(
+        shell->st->BootServices->GetMemoryMap,
+        5,
+        &map_size,
+        NULL,
+        &map_key,
+        &desc_size,
+        &desc_version
+    );
+    if (status != EFI_BUFFER_TOO_SMALL || desc_size == 0) {
+        shell_print_error_status(shell, "memmap failed", status);
+        return;
+    }
+
+    map_size += desc_size * 8;
+    EFI_MEMORY_DESCRIPTOR *map = (EFI_MEMORY_DESCRIPTOR *)shell_alloc(shell, map_size);
+    if (map == NULL) {
+        shell_println(shell, "memmap: out of memory");
+        return;
+    }
+
+    status = uefi_call_wrapper(
+        shell->st->BootServices->GetMemoryMap,
+        5,
+        &map_size,
+        map,
+        &map_key,
+        &desc_size,
+        &desc_version
+    );
+    if (EFI_ERROR(status)) {
+        shell_print_error_status(shell, "memmap failed", status);
+        shell_free(shell, map);
+        return;
+    }
+
+    UINTN desc_count = map_size / desc_size;
+    UINT64 pages_by_type[EfiMaxMemoryType + 1];
+    for (UINTN i = 0; i <= EfiMaxMemoryType; i++) {
+        pages_by_type[i] = 0;
+    }
+
+    for (UINTN i = 0; i < desc_count; i++) {
+        EFI_MEMORY_DESCRIPTOR *d = (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)map + i * desc_size);
+        if (d->Type <= EfiMaxMemoryType) {
+            pages_by_type[d->Type] += d->NumberOfPages;
+        }
+    }
+
+    shell_print(shell, "Descriptors: ");
+    shell_print_u64(shell, desc_count);
+    shell_print(shell, ", descriptor size: ");
+    shell_print_u64(shell, desc_size);
+    shell_putc(shell, '\n');
+
+    char map_key_hex[32];
+    u_u64_to_hex((UINT64)map_key, map_key_hex, sizeof(map_key_hex));
+    shell_print(shell, "Map key: ");
+    shell_print(shell, map_key_hex);
+    shell_print(shell, ", desc version: ");
+    shell_print_u64(shell, desc_version);
+    shell_putc(shell, '\n');
+
+    UINT64 total_pages = 0;
+    for (UINTN type = 0; type <= EfiMaxMemoryType; type++) {
+        if (pages_by_type[type] == 0) {
+            continue;
+        }
+        total_pages += pages_by_type[type];
+
+        shell_print(shell, "  ");
+        shell_print(shell, shell_mem_type_name((UINT32)type));
+        shell_print(shell, ": ");
+        shell_print_u64(shell, pages_by_type[type]);
+        shell_print(shell, " pages (");
+        shell_print_u64(shell, pages_by_type[type] / 256);
+        shell_println(shell, " MiB)");
+    }
+
+    shell_print(shell, "Total pages: ");
+    shell_print_u64(shell, total_pages);
+    shell_print(shell, " (");
+    shell_print_u64(shell, total_pages / 256);
+    shell_println(shell, " MiB)");
+
+    shell_free(shell, map);
+}
+
 // Print runtime/system metadata for debugging.
 static void print_info(Shell *shell) {
     char w[32], h[32], fb_addr[32], fb_size[32];
@@ -1150,6 +1384,9 @@ static void shell_execute(Shell *shell, char *line) {
         shell_println(shell, "  mkdir <p>   - create directory");
         shell_println(shell, "  touch <p>   - create empty file");
         shell_println(shell, "  cp <s> <d>  - copy file");
+        shell_println(shell, "  theme ...   - shell colors/prompt");
+        shell_println(shell, "  time        - read UEFI clock");
+        shell_println(shell, "  memmap      - summarize memory map");
         shell_println(shell, "  info        - show system info");
         shell_println(shell, "  reboot      - reboot machine");
         return;
@@ -1258,6 +1495,26 @@ static void shell_execute(Shell *shell, char *line) {
 
     if (u_strcmp(cmd, "cp") == 0) {
         shell_cmd_cp(shell, "", "");
+        return;
+    }
+
+    if (u_startswith(cmd, "theme ")) {
+        shell_cmd_theme(shell, u_trim_left(cmd + 6));
+        return;
+    }
+
+    if (u_strcmp(cmd, "theme") == 0) {
+        shell_cmd_theme(shell, "");
+        return;
+    }
+
+    if (u_strcmp(cmd, "time") == 0) {
+        shell_cmd_time(shell);
+        return;
+    }
+
+    if (u_strcmp(cmd, "memmap") == 0) {
+        shell_cmd_memmap(shell);
         return;
     }
 

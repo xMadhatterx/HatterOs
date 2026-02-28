@@ -4,7 +4,7 @@ HatterOS is a minimal hobby OS prototype implemented as a single UEFI applicatio
 
 Boot flow:
 1. Initialize GOP and select mode closest to `1024x768`.
-2. Draw graphical splash screen (gradient + hat icon + large `HatterOS` title).
+2. Draw graphical splash screen (gradient + optional `\EFI\BOOT\SPLASH.BMP`, else hat icon + large `HatterOS` title).
 3. Wait for keypress or 2-second timeout.
 4. Enter framebuffer-rendered command shell.
 
@@ -85,6 +85,11 @@ cat /docs/hello.txt
 
 Note: `esp_files/EFI/BOOT/STARTUP.NSH` is included as a smoke-test script template and copied into the image automatically.
 
+Optional splash asset:
+- Place a bitmap at `esp_files/EFI/BOOT/SPLASH.BMP`.
+- Supported format: uncompressed BMP, 24-bit or 32-bit.
+- If missing/invalid, HatterOS uses the built-in procedural splash.
+
 After booting into the shell, quick smoke-test commands:
 - `help`
 - `pwd`
@@ -93,6 +98,10 @@ After booting into the shell, quick smoke-test commands:
 - `cat /EFI/BOOT/STARTUP.NSH` (if present)
 - `mkdir demo && touch demo/a.txt` (run as separate commands)
 - `cp demo/a.txt demo/b.txt`
+- `theme amber`
+- `theme prompt short`
+- `time`
+- `memmap`
 - `info`
 
 ### Minimal Diagnostic Boot
