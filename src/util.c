@@ -1,5 +1,6 @@
 #include "util.h"
 
+// Minimal libc-like helpers for freestanding UEFI code.
 UINTN u_strlen(const char *s) {
     UINTN len = 0;
     while (s[len] != '\0') {
@@ -43,6 +44,7 @@ char *u_trim_left(char *s) {
     return s;
 }
 
+// Integer formatting helpers (no sprintf available).
 void u_u64_to_dec(UINT64 value, char *out, UINTN out_size) {
     if (out_size == 0) {
         return;
@@ -96,6 +98,7 @@ void u_u64_to_hex(UINT64 value, char *out, UINTN out_size) {
     out[idx] = '\0';
 }
 
+// Serial logging intentionally disabled for portability/stability.
 void serial_init(void) {
     // Intentionally left as a no-op.
     // Direct x86 port I/O (COM1 outb) can trigger a GP fault in some UEFI

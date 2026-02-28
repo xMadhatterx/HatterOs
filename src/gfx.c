@@ -1,10 +1,13 @@
 #include "gfx.h"
 #include <efilib.h>
 
+// Helper for "closest resolution" scoring.
 static UINTN abs_diff(UINTN a, UINTN b) {
     return (a > b) ? (a - b) : (b - a);
 }
 
+// Input colors in this codebase are stored as 0xRRGGBB.
+// GOP framebuffers can be RGB or BGR, so convert before writing.
 static UINT32 to_native_color(const GfxContext *ctx, UINT32 rgb) {
     UINT32 r = (rgb >> 16) & 0xFF;
     UINT32 g = (rgb >> 8) & 0xFF;
@@ -17,6 +20,7 @@ static UINT32 to_native_color(const GfxContext *ctx, UINT32 rgb) {
     return (r << 16) | (g << 8) | b;
 }
 
+// Locate GOP, choose a reasonable mode, and cache framebuffer metadata.
 EFI_STATUS gfx_init(EFI_SYSTEM_TABLE *st, GfxContext *ctx, UINTN target_w, UINTN target_h) {
     EFI_STATUS status;
     EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
@@ -45,6 +49,7 @@ EFI_STATUS gfx_init(EFI_SYSTEM_TABLE *st, GfxContext *ctx, UINTN target_w, UINTN
     UINT32 best_mode = ctx->gop->Mode->Mode;
     UINTN best_score = (UINTN)-1;
 
+    // Pick mode whose width/height is closest to our target.
     for (UINT32 mode = 0; mode < ctx->gop->Mode->MaxMode; mode++) {
         EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
         UINTN info_size = 0;
@@ -88,6 +93,7 @@ EFI_STATUS gfx_init(EFI_SYSTEM_TABLE *st, GfxContext *ctx, UINTN target_w, UINTN
     return EFI_SUCCESS;
 }
 
+// Single-pixel write with bounds checking.
 void gfx_put_pixel(GfxContext *ctx, UINTN x, UINTN y, UINT32 color) {
     if (x >= ctx->width || y >= ctx->height) {
         return;
@@ -95,6 +101,7 @@ void gfx_put_pixel(GfxContext *ctx, UINTN x, UINTN y, UINT32 color) {
     ctx->framebuffer[y * ctx->pixels_per_scanline + x] = to_native_color(ctx, color);
 }
 
+// Fill whole screen with one color.
 void gfx_clear(GfxContext *ctx, UINT32 color) {
     UINT32 native = to_native_color(ctx, color);
     for (UINTN y = 0; y < ctx->height; y++) {
@@ -105,6 +112,7 @@ void gfx_clear(GfxContext *ctx, UINT32 color) {
     }
 }
 
+// Rectangle fill primitive used by icon and font rendering.
 void gfx_fill_rect(GfxContext *ctx, UINTN x, UINTN y, UINTN w, UINTN h, UINT32 color) {
     UINTN x_end = x + w;
     UINTN y_end = y + h;
@@ -124,6 +132,7 @@ void gfx_fill_rect(GfxContext *ctx, UINTN x, UINTN y, UINTN w, UINTN h, UINT32 c
     }
 }
 
+// Simple vertical gradient between two RGB colors.
 void gfx_draw_gradient(GfxContext *ctx, UINT32 top_color, UINT32 bottom_color) {
     UINT8 tr = (UINT8)((top_color >> 16) & 0xFF);
     UINT8 tg = (UINT8)((top_color >> 8) & 0xFF);

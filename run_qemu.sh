@@ -6,6 +6,7 @@ BUILD_DIR="$ROOT_DIR/build"
 EFI_BIN="$BUILD_DIR/BOOTX64.EFI"
 ESP_IMG="$BUILD_DIR/hatteros_esp.img"
 OVMF_VARS_WORK="$BUILD_DIR/OVMF_VARS.fd"
+ESP_FILES_DIR="$ROOT_DIR/esp_files"
 MAKE_TARGET="all"
 
 find_ovmf_pair() {
@@ -34,6 +35,30 @@ require_cmd() {
     echo "Missing required command: $1" >&2
     exit 1
   fi
+}
+
+copy_extra_esp_files() {
+  if [[ ! -d "$ESP_FILES_DIR" ]]; then
+    return
+  fi
+
+  local first_entry
+  first_entry="$(find "$ESP_FILES_DIR" -mindepth 1 ! -name .gitkeep -print -quit)"
+  if [[ -z "$first_entry" ]]; then
+    return
+  fi
+
+  echo "Copying extra files from esp_files/ into ESP image..."
+
+  while IFS= read -r -d '' dir; do
+    local rel="${dir#"$ESP_FILES_DIR"/}"
+    mmd -i "$ESP_IMG" "::/$rel" >/dev/null 2>&1 || true
+  done < <(find "$ESP_FILES_DIR" -mindepth 1 -type d -print0)
+
+  while IFS= read -r -d '' file; do
+    local rel="${file#"$ESP_FILES_DIR"/}"
+    mcopy -i "$ESP_IMG" "$file" "::/$rel" >/dev/null
+  done < <(find "$ESP_FILES_DIR" -type f ! -name .gitkeep -print0)
 }
 
 main() {
@@ -97,6 +122,7 @@ main() {
 
   mmd -i "$ESP_IMG" ::/EFI ::/EFI/BOOT >/dev/null
   mcopy -i "$ESP_IMG" "$EFI_BIN" ::/EFI/BOOT/BOOTX64.EFI >/dev/null
+  copy_extra_esp_files
 
   cp "$ovmf_vars_src" "$OVMF_VARS_WORK"
 

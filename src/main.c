@@ -5,12 +5,14 @@
 #include "font.h"
 #include "shell.h"
 
+// Small fallback path for text output when graphics setup fails.
 static void uefi_text(EFI_SYSTEM_TABLE *st, CHAR16 *msg) {
     if (st && st->ConOut) {
         uefi_call_wrapper(st->ConOut->OutputString, 2, st->ConOut, msg);
     }
 }
 
+// Draw a procedural top-hat icon so we do not need external image assets.
 static void draw_hat_icon(GfxContext *gfx, UINTN center_x, UINTN center_y, UINTN scale) {
     UINTN brim_w = 120 * scale;
     UINTN brim_h = 18 * scale;
@@ -34,6 +36,7 @@ static void draw_hat_icon(GfxContext *gfx, UINTN center_x, UINTN center_y, UINTN
     gfx_fill_rect(gfx, crown_x + 8 * scale, crown_y + 10 * scale, 8 * scale, crown_h - 20 * scale, highlight);
 }
 
+// Paint the splash scene: gradient background + icon + title + hint line.
 static void draw_splash(GfxContext *gfx) {
     gfx_draw_gradient(gfx, 0x0E1B2C, 0x253C59);
 
@@ -55,6 +58,7 @@ static void draw_splash(GfxContext *gfx) {
     font_draw_text(gfx, hint_x, hint_y, hint, 0xDCE5F2, 0, hint_scale, TRUE);
 }
 
+// Wait for either keyboard input or a timeout so splash can auto-advance.
 static void wait_for_key_or_timeout(EFI_SYSTEM_TABLE *st, UINTN timeout_ms) {
     if (st == NULL || st->BootServices == NULL || st->ConIn == NULL) {
         return;
@@ -89,6 +93,7 @@ static void wait_for_key_or_timeout(EFI_SYSTEM_TABLE *st, UINTN timeout_ms) {
     uefi_call_wrapper(st->BootServices->CloseEvent, 1, timer_event);
 }
 
+// UEFI entrypoint: initialize graphics, show splash, then enter the shell.
 EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table) {
     (void)image_handle;
 
@@ -103,6 +108,7 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table) {
     GfxContext gfx;
     EFI_STATUS status = gfx_init(system_table, &gfx, 1024, 768);
     if (EFI_ERROR(status)) {
+        // Keep failure mode user-friendly instead of returning cryptic firmware errors.
         uefi_text(system_table, L"HatterOS: GOP init failed, cannot start framebuffer shell.\r\n");
         return EFI_SUCCESS;
     }

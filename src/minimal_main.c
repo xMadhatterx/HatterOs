@@ -1,6 +1,7 @@
 #include <efi.h>
 #include <efilib.h>
 
+// Minimal EFI app used to isolate firmware/toolchain issues from HatterOS logic.
 EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table) {
     (void)image_handle;
 

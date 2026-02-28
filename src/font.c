@@ -1,6 +1,7 @@
 #include "font.h"
 #include "util.h"
 
+// Fallback "unknown character" box glyph.
 static const UINT8 fallback_glyph[8] = {0x7E,0x42,0x5A,0x5A,0x5A,0x42,0x7E,0x00};
 static const UINT8 glyph_space[8] = {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
 static const UINT8 glyph_bang[8] = {0x18,0x18,0x18,0x18,0x18,0x00,0x18,0x00};
@@ -56,6 +57,7 @@ static const UINT8 glyph_alpha[26][8] = {
     {0x7E,0x06,0x0C,0x18,0x30,0x60,0x7E,0x00}
 };
 
+// Map ASCII character to an 8x8 bitmap.
 static const UINT8 *lookup_glyph(char ch) {
     if (ch >= 'a' && ch <= 'z') {
         ch = (char)(ch - 'a' + 'A');
@@ -85,6 +87,8 @@ static const UINT8 *lookup_glyph(char ch) {
     }
 }
 
+// Draw one character at (x, y).
+// Each source row is duplicated vertically so the effective cell is 8x16.
 void font_draw_char(GfxContext *ctx, UINTN x, UINTN y, char ch, UINT32 fg, UINT32 bg, UINTN scale, BOOLEAN transparent_bg) {
     if (scale == 0) {
         scale = 1;
@@ -111,6 +115,7 @@ void font_draw_char(GfxContext *ctx, UINTN x, UINTN y, char ch, UINT32 fg, UINT3
     }
 }
 
+// Draw a null-terminated text string using fixed-width cells.
 void font_draw_text(GfxContext *ctx, UINTN x, UINTN y, const char *text, UINT32 fg, UINT32 bg, UINTN scale, BOOLEAN transparent_bg) {
     UINTN cursor_x = x;
     while (*text) {
@@ -120,6 +125,7 @@ void font_draw_text(GfxContext *ctx, UINTN x, UINTN y, const char *text, UINT32 
     }
 }
 
+// Return pixel width for a given string/scale pair.
 UINTN font_text_width(const char *text, UINTN scale) {
     return u_strlen(text) * FONT_CHAR_WIDTH * ((scale == 0) ? 1 : scale);
 }

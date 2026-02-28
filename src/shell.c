@@ -21,6 +21,7 @@ static void shell_cmd_cat(Shell *shell, const char *arg);
 static void *shell_alloc(Shell *shell, UINTN size);
 static void shell_free(Shell *shell, void *ptr);
 
+// Initialize shell state and compute text-grid size from framebuffer dimensions.
 void shell_init(Shell *shell, EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st, GfxContext *gfx) {
     shell->image_handle = image_handle;
     shell->st = st;
@@ -46,12 +47,14 @@ void shell_init(Shell *shell, EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st, Gfx
     shell_clear(shell);
 }
 
+// Clear the shell viewport and reset cursor to top-left.
 void shell_clear(Shell *shell) {
     gfx_clear(shell->gfx, shell->bg_color);
     shell->cursor_col = 0;
     shell->cursor_row = 0;
 }
 
+// Scroll one text row upward by moving framebuffer pixels directly.
 static void shell_scroll(Shell *shell) {
     GfxContext *gfx = shell->gfx;
     UINTN line_px = FONT_CHAR_HEIGHT;
@@ -75,6 +78,7 @@ static void shell_scroll(Shell *shell) {
     gfx_fill_rect(gfx, shell->margin_x, clear_start, right - shell->margin_x, line_px, shell->bg_color);
 }
 
+// Move to the next line and scroll if we reached the bottom row.
 static void shell_newline(Shell *shell) {
     shell->cursor_col = 0;
     shell->cursor_row++;
@@ -84,6 +88,7 @@ static void shell_newline(Shell *shell) {
     }
 }
 
+// Render one printable character into the shell grid.
 static void shell_putc(Shell *shell, char c) {
     if (c == '\n') {
         shell_newline(shell);
@@ -100,21 +105,25 @@ static void shell_putc(Shell *shell, char c) {
     }
 }
 
+// Print a string without implicit newline.
 void shell_print(Shell *shell, const char *text) {
     while (*text) {
         shell_putc(shell, *text++);
     }
 }
 
+// Print a string followed by newline.
 void shell_println(Shell *shell, const char *text) {
     shell_print(shell, text);
     shell_putc(shell, '\n');
 }
 
+// Draw the interactive prompt.
 static void shell_prompt(Shell *shell) {
     shell_print(shell, "HatterOS> ");
 }
 
+// Remove one character cell visually (used for backspace handling).
 static void erase_last_char(Shell *shell) {
     if (shell->cursor_col == 0 && shell->cursor_row == 0) {
         return;
@@ -132,6 +141,8 @@ static void erase_last_char(Shell *shell) {
     gfx_fill_rect(shell->gfx, px, py, FONT_CHAR_WIDTH, FONT_CHAR_HEIGHT, shell->bg_color);
 }
 
+// Blocking line editor using UEFI keyboard input.
+// Supports printable ASCII, backspace, and enter.
 static EFI_STATUS shell_read_line(Shell *shell, char *line, UINTN max_len) {
     if (shell == NULL || shell->st == NULL || shell->st->BootServices == NULL || shell->st->ConIn == NULL) {
         return EFI_UNSUPPORTED;
@@ -177,6 +188,7 @@ static EFI_STATUS shell_read_line(Shell *shell, char *line, UINTN max_len) {
     }
 }
 
+// Small wrappers over BootServices AllocatePool/FreePool for convenience.
 static void *shell_alloc(Shell *shell, UINTN size) {
     if (shell == NULL || shell->st == NULL || shell->st->BootServices == NULL) {
         return NULL;
@@ -196,6 +208,7 @@ static void shell_free(Shell *shell, void *ptr) {
     uefi_call_wrapper(shell->st->BootServices->FreePool, 1, ptr);
 }
 
+// Open ESP root directory where this EFI app was loaded from.
 static EFI_STATUS shell_open_root(Shell *shell, EFI_FILE_PROTOCOL **root) {
     if (root == NULL) {
         return EFI_INVALID_PARAMETER;
@@ -233,6 +246,8 @@ static EFI_STATUS shell_open_root(Shell *shell, EFI_FILE_PROTOCOL **root) {
     return uefi_call_wrapper(fs->OpenVolume, 2, fs, root);
 }
 
+// Convert shell ASCII path into UEFI CHAR16 path.
+// Examples: "docs/a.txt" -> "\\docs\\a.txt", "" -> "\\".
 static BOOLEAN shell_ascii_path_to_char16(const char *path, CHAR16 *out, UINTN out_len) {
     if (out == NULL || out_len < 2) {
         return FALSE;
@@ -270,6 +285,7 @@ static BOOLEAN shell_ascii_path_to_char16(const char *path, CHAR16 *out, UINTN o
     return TRUE;
 }
 
+// Render a CHAR16 filename as best-effort ASCII.
 static void shell_print_file_name(Shell *shell, const CHAR16 *name) {
     char line[256];
     UINTN i = 0;
@@ -282,6 +298,8 @@ static void shell_print_file_name(Shell *shell, const CHAR16 *name) {
     shell_println(shell, line);
 }
 
+// `ls [path]` implementation.
+// If path is a file, print that entry; if path is a directory, iterate entries.
 static void shell_cmd_ls(Shell *shell, const char *arg) {
     EFI_FILE_PROTOCOL *root = NULL;
     EFI_FILE_PROTOCOL *dir = NULL;
@@ -336,6 +354,7 @@ static void shell_cmd_ls(Shell *shell, const char *arg) {
         UINTN read_size = info_buf_size;
         status = uefi_call_wrapper(dir->Read, 3, dir, &read_size, info);
         if (status == EFI_BUFFER_TOO_SMALL && read_size > info_buf_size) {
+            // Some filesystems return variable-sized file info records.
             shell_free(shell, info);
             info_buf_size = read_size;
             info = (EFI_FILE_INFO *)shell_alloc(shell, info_buf_size);
@@ -365,6 +384,7 @@ static void shell_cmd_ls(Shell *shell, const char *arg) {
     uefi_call_wrapper(dir->Close, 1, dir);
 }
 
+// `cat <path>` implementation (text-oriented viewer).
 static void shell_cmd_cat(Shell *shell, const char *arg) {
     if (arg == NULL || *arg == '\0') {
         shell_println(shell, "cat: usage: cat <path>");
@@ -429,6 +449,7 @@ static void shell_cmd_cat(Shell *shell, const char *arg) {
             if (c == '\r') {
                 continue;
             }
+            // Keep display stable for non-printable bytes.
             if (c == '\n' || c == '\t' || (c >= 32 && c <= 126)) {
                 shell_putc(shell, c);
             } else {
@@ -442,6 +463,7 @@ static void shell_cmd_cat(Shell *shell, const char *arg) {
     uefi_call_wrapper(file->Close, 1, file);
 }
 
+// Print runtime/system metadata for debugging.
 static void print_info(Shell *shell) {
     char w[32], h[32], fb_addr[32], fb_size[32];
     u_u64_to_dec(shell->gfx->width, w, sizeof(w));
@@ -465,6 +487,7 @@ static void print_info(Shell *shell) {
     shell_println(shell, " bytes");
 }
 
+// Parse and dispatch one command line.
 static void shell_execute(Shell *shell, char *line) {
     char *cmd = u_trim_left(line);
     if (*cmd == '\0') {
@@ -534,6 +557,7 @@ static void shell_execute(Shell *shell, char *line) {
     shell_println(shell, "Type 'help' for available commands.");
 }
 
+// Main REPL loop.
 void shell_run(Shell *shell) {
     if (shell == NULL || shell->st == NULL || shell->st->ConIn == NULL) {
         return;

@@ -59,8 +59,29 @@ Script behavior:
 1. Builds with `make`.
 2. Creates `build/hatteros_esp.img` (FAT32).
 3. Copies EFI app to `/EFI/BOOT/BOOTX64.EFI` inside image.
-4. Locates OVMF firmware from common paths.
-5. Boots QEMU with `-serial stdio` enabled.
+4. Copies optional extra files from `esp_files/` into the ESP image root.
+5. Locates OVMF firmware from common paths.
+6. Boots QEMU with `-serial stdio` enabled.
+
+### Add Files For `ls` / `cat`
+
+Put any files you want to test in `esp_files/` (subdirectories are preserved). Example:
+
+```bash
+mkdir -p esp_files/docs
+cat > esp_files/docs/hello.txt <<'EOF'
+Hello from ESP.
+EOF
+./run_qemu.sh
+```
+
+Then in HatterOS:
+
+```text
+ls /
+ls /docs
+cat /docs/hello.txt
+```
 
 After booting into the shell, quick smoke-test commands:
 - `help`
