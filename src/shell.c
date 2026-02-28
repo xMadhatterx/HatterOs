@@ -109,6 +109,10 @@ static void erase_last_char(Shell *shell) {
 }
 
 static EFI_STATUS shell_read_line(Shell *shell, char *line, UINTN max_len) {
+    if (shell == NULL || shell->st == NULL || shell->st->BootServices == NULL || shell->st->ConIn == NULL) {
+        return EFI_UNSUPPORTED;
+    }
+
     UINTN len = 0;
 
     while (1) {
@@ -223,6 +227,10 @@ static void shell_execute(Shell *shell, char *line) {
 }
 
 void shell_run(Shell *shell) {
+    if (shell == NULL || shell->st == NULL || shell->st->ConIn == NULL) {
+        return;
+    }
+
     shell_println(shell, "HatterOS shell ready. Type 'help'.");
 
     while (1) {

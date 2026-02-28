@@ -56,6 +56,10 @@ static void draw_splash(GfxContext *gfx) {
 }
 
 static void wait_for_key_or_timeout(EFI_SYSTEM_TABLE *st, UINTN timeout_ms) {
+    if (st == NULL || st->BootServices == NULL || st->ConIn == NULL) {
+        return;
+    }
+
     EFI_EVENT timer_event;
     EFI_STATUS status = st->BootServices->CreateEvent(EVT_TIMER, TPL_CALLBACK, NULL, NULL, &timer_event);
     if (EFI_ERROR(status)) {
@@ -77,15 +81,21 @@ static void wait_for_key_or_timeout(EFI_SYSTEM_TABLE *st, UINTN timeout_ms) {
     st->BootServices->CloseEvent(timer_event);
 }
 
-EFI_STATUS EFIAPI efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table) {
+EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table) {
     (void)image_handle;
+
+    if (system_table == NULL || system_table->BootServices == NULL) {
+        return EFI_SUCCESS;
+    }
 
     uefi_text(system_table, L"HatterOS: entry\r\n");
 
     serial_init();
     serial_writeln("[hatteros] Booting UEFI app");
 
-    system_table->ConIn->Reset(system_table->ConIn, FALSE);
+    if (system_table->ConIn != NULL && system_table->ConIn->Reset != NULL) {
+        system_table->ConIn->Reset(system_table->ConIn, FALSE);
+    }
 
     GfxContext gfx;
     EFI_STATUS status = gfx_init(system_table, &gfx, 1024, 768);
